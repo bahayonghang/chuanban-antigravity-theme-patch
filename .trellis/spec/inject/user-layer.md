@@ -17,6 +17,7 @@
 - `enabled`：`false` 时整套补丁无损卸载。关补丁用这个字段，不要去删客户端文件。
 - `channel`：`auto`、`stable` 或 `insiders`。默认 `auto`。
 - `preset`：只写 `high-contrast`、`claude-desktop-purewhite`、`vintage-deep`。
+- `scheme`：只写 `auto`、`light`、`dark`。缺字段或别的值在运行时当 `auto`。
 - `contextLimit`：默认 `256000`。非正数会被守护进程打回 256000。
 - `modules`：六个布尔开关。可以写成别名 `features`。`metrics` 可以写成 `metricsCapsule`，但同一份配置里不要两个都写不同值。
 - `themeVars`：CSS 变量名到字符串。空对象表示不覆盖。

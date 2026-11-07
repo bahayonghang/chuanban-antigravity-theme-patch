@@ -14,18 +14,18 @@
 
 ## 谁可以被注入
 
-函数体第一件事：
+函数体第一件事是判断当前窗口要不要注入：
 
 ```js
-if (window.top !== window) return;
+if (window.top !== window && !isAgentPanelWindow()) return;
 if (!boot || typeof boot !== 'object') return;
 ```
 
-Artifact / HTML 预览之类的子 iframe 不注入。不要删掉这个判断。
+Artifact / HTML 预览之类的子 iframe 不注入。唯一例外是本机 Agent 面板：协议为 `http:` 或 `https:`，主机是 `127.0.0.1` 或 `localhost`，并且查询串有 `extensionView=true` 或 `hostTheme`。不要放行其余 iframe，也不要删掉这个判断。
 
 ## boot 与模块开关
 
-守护进程放进 boot 的字段包括 `version`、`platform`、`enabled`、`preset`、`cssText`、`customCss`、`themeVars`、`i18nDict`、`modules`、`features`（与 `modules` 同一对象）、`selectors`、`config`、`customJs`。
+守护进程放进 boot 的字段包括 `version`、`platform`、`enabled`、`preset`、`scheme`、`cssText`、`customCss`、`themeVars`、`i18nDict`、`modules`、`features`（与 `modules` 同一对象）、`selectors`、`config`、`customJs`。`scheme` 只可能是 `auto`、`light`、`dark`。
 
 页面里模块默认值写在 `runtime.js` 的 `Object.assign`：
 
@@ -42,7 +42,7 @@ Artifact / HTML 预览之类的子 iframe 不注入。不要删掉这个判断�
 - `metricsCapsule` 只有在没写 `metrics` 时才当作 `metrics`。
 - 运行时再把 `MODULES.metricsCapsule` 设成 `MODULES.metrics`，旧调用点还能读到。
 
-关整个补丁是 `enabled: false`，不是把每个模块都关掉。那条路径会删掉 `#ag-custom-fonts`、`#antigravity-user-custom-style`、`#ag-live-metrics-pill`、`#ag-live-metrics-tooltip`，断开 observer / interval，清掉 `data-ag-preset`、`data-ag-page-type`、`data-ag-wax-seal`，并用 WeakMap 把译文还原。
+关整个补丁是 `enabled: false`，不是把每个模块都关掉。那条路径会删掉 `#ag-custom-fonts`、`#antigravity-user-custom-style`、`#ag-live-metrics-pill`、`#ag-live-metrics-tooltip`，断开 observer / interval，清掉 `data-ag-preset`、`data-ag-scheme`、`data-ag-page-type`、`data-ag-wax-seal`，并用 WeakMap 把译文还原。
 
 ## 页面上的状态
 
@@ -83,7 +83,7 @@ fn(window.__AG_PATCH_CTX__, window.__AG_PATCH_CTX__);
 ## 反模式
 
 - 把 React、打包器或 npm 包引进 `runtime.js`。
-- 注入子 iframe，或在非顶层窗口改 `history`。
+- 注入 Agent 面板以外的子 iframe，或在非顶层窗口改 `history`。
 - 用 `localStorage.theme-preset-light = ...` 直接赋值。现有代码走 `Storage.prototype.setItem/getItem.call`，并会把非法的 `theme-preset-light` 改回 `Default Light`，避免原生主题选择器白屏。
 - 热重载时不 `disconnect` 旧 observer 就 `new` 一个新的。
 

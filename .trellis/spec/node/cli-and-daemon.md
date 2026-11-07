@@ -48,15 +48,65 @@ import fs from 'node:fs';
 
 PID 锁文件是 `os.tmpdir()` 下的 `ag-theme-daemon-${pidKey}.pid`。`--once` 不加锁。已有活进程先 `SIGTERM`。清理只删「内容仍是自己 pid」的文件。
 
-通道默认 `auto`：一个进程同时看 Stable 与 Insiders。锁定通道只通过已有的 `--channel stable|insiders`。不要再写一个只盯单一通道的守护进程。
+通道默认 `auto`：一个进程同时看 Stable 与 Insiders。`~/.antigravity-ide`、IDE 端口文件或 `~/.gemini/antigravity-ide/conversations` 已存在时，再附加 IDE 端点，不替换前两个。`user/config.json` 里的 `portFile`、`conversationsDir`、`fallbackPort` 在 `auto` 下不能把另一套挤掉；只有命令行 `--port-file` 才锁定单一端口。锁定通道只通过已有的 `--channel stable|insiders`，这两个通道不探测 IDE。不要再写一个只盯单一通道的守护进程。
 
 ## CDP 与会话指标
 
 - 列页面只用 `http.get({ host: '127.0.0.1', port, path: '/json/list' })`。
-- 注入前过滤：`type === 'page'`、有 `webSocketDebuggerUrl`、不是 `devtools://`、`isAllowedOrigin`、标题不含 `Launchpad`。
+- 注入前过滤：有 `webSocketDebuggerUrl`、不是 `devtools://`、`isAllowedOrigin`、标题不含 `Launchpad`，并且是 `type === 'page'`，或是符合 Agent 面板判定的 `iframe`。`install.mjs` 的 `verify` 使用同一判定，并在多个端口里优先选 Agent 面板。
 - 会话 id 只接受 `/^[0-9a-f-]{36}$/i`。不匹配直接 `return null`，见 `parseConversationMetrics`。
 - 打开会话库必须 `{ readOnly: true }`。这个补丁不写会话库。
 - 指标缓存是进程内 `Map`，上限 `MAX_METRICS_CACHE_SIZE = 30`。不要把指标落到仓库或 `user/`。
+
+## Scenario: 两个客户端同时注入
+
+### 1. Scope / Trigger
+
+本机可以同时跑经典版 `Antigravity.exe` 和 `Antigravity IDE.exe`。只打中其中一个，另一个会停在原生主题。
+
+### 2. Signatures
+
+- `resolveActiveChannelEndpoints(channelMode, userCfg)` 在 `auto` 下返回经典 Stable、Insiders（目录存在时才有响应）和 IDE 端点。
+- 命令行 `getArg('--port-file')` 非空时只返回一个端点。
+- `node install.mjs install --scheme auto|light|dark` 只在值精确匹配时写入配置。
+
+### 3. Contracts
+
+| 端点 | 端口文件 | 会话目录 |
+| --- | --- | --- |
+| stable | `%APPDATA%/Antigravity/DevToolsActivePort` | `~/.gemini/antigravity/conversations` |
+| ide | `%APPDATA%/Antigravity IDE/DevToolsActivePort` | `~/.gemini/antigravity-ide/conversations` |
+
+`user/config.json` 的 `portFile`、`conversationsDir`、`fallbackPort` 不参与 `auto` 的端点列表。IDE 的 argv 在 `~/.antigravity-ide/argv.json`。Antigravity IDE 1.107.0 只写这个字段不会打开 9222，必须完全退出后用 `--remote-debugging-port=9222` 启动。
+
+Agent 面板是本机 `http:`/`https:` iframe，查询串有 `extensionView=true` 或 `hostTheme`。端口不固定，来源白名单用 `http://127.0.0.1` 前缀，不要写成 `http://127.0.0.1:9501`。
+
+### 4. Validation & Error Matrix
+
+- 配置 `portFile` 指向 IDE，经典版仍在跑 → `auto` 仍附加经典版端口，不报错。
+- `--port-file` 指向不存在的文件 → 该轮 `/json/list` 失败，继续，不退出。
+- `--scheme` 不是 `auto|light|dark` → 不写入，安装不失败。
+- 9222 没有监听 → `verify` 的 `ok` 可以因别的窗口而为 true，但 IDE 面板未注入；不要把这写成代码失败。
+
+### 5. Good/Base/Bad Cases
+
+- Good：经典版整窗和 IDE 侧栏同时带 `data-ag-scheme`。
+- Base：只有其中一个进程在听端口，另一个端点空转。
+- Bad：`allowedOrigins` 只剩某一个端口，动态面板被拒。
+
+### 6. Tests Required
+
+仓库没有单测。`node --check core/daemon.mjs` 后，对每个在听的端口看 `/json/list`：经典版 `page` 和 IDE Agent iframe 都应出现在守护进程的 `Attached target` 日志里。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+`auto` 看到配置里的 `portFile` 就只探测那一个文件。
+
+#### Correct
+
+`auto` 忽略配置里的单目标字段，经典版和 IDE 各走各的默认路径。只有命令行 `--port-file` 收成一个端点。
 
 ## 反模式
 

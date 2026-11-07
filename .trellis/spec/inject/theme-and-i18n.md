@@ -35,6 +35,8 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 
 新预设要同时加：`runtime.js` 里的预设同步、`theme.css` 里带旧别名的选择器、以及 `user/custom.js` 头注释里的联合类型。不要只改其中一处。
 
+明暗不是第四个预设。`scheme` 写到 `data-ag-scheme`，只允许 `auto`、`light`、`dark`。暗色是三套亮色预设之后的 `html[data-ag-scheme="dark"]` 令牌，选择器要压过 `body.theme-light`，并且变量带 `!important`。不要改 `vintage-deep` 的浅色色值，也不要复制一整份暗色选择器。
+
 蜡封三态是纯 CSS，不靠 JS 轮询：
 
 - 首页：`html:has([data-testid="home-greeting"])`，默认透明，悬停/聚焦才出淡蜡封。
@@ -42,6 +44,52 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 - 关蜡封是 `data-ag-wax-seal="off"`，对应模块 `composerWaxSeal: false`。
 
 改颜色优先加 CSS 变量，让 `user/config.json` 的 `themeVars` 能覆盖。变量写到 `documentElement`，删除键时运行时会 `removeProperty`。
+
+## Scenario: scheme 与暗色表面
+
+### 1. Scope / Trigger
+
+暗色不是新预设。经典版整窗和 IDE Agent 面板共用 `boot.scheme` 与 `data-ag-scheme`。
+
+### 2. Signatures
+
+- 配置和 `boot.scheme`：精确字符串 `auto`、`light`、`dark`。其他值在守护进程里变成 `auto`。
+- 页面属性：`document.documentElement.dataset` 对应 `data-ag-scheme="dark"|"light"`。
+- 内容哈希对象必须包含 `scheme`，否则只改这个字段不会换注入版本。
+
+### 3. Contracts
+
+判定顺序：配置里的 `light`/`dark`；当前 URL 的 `hostTheme`；`theme-dark` / `theme-light` 类；`localStorage['theme-mode']` 恰好为 `dark` 或 `light`；否则 `light`。
+
+暗色表面令牌：页面 `#1C1917`，侧栏 `#24201C`，输入框外层 `#2A231E`，内卡 `#1F1B18`，正文 `#F4EFE6`，侧栏字 `#E7E0D6`，蜡封 `#C46A58`。发送按钮保持 `#D97757` / `#FFFFFF`。
+
+经典版整窗的可见底色在 `.agy-shell`、`.agy-sheet`、`.bg-background`、`.bg-sidebar` 上，不在 `body`。`.agy-sheet` 还有一层冷蓝径向渐变，暗色时要换成暖色，否则主区仍像原生主题。
+
+### 4. Validation & Error Matrix
+
+- 预设规则带 `!important`，暗色变量不带 → 暗色不生效。
+- 暗色选择器压不过 `html[data-ag-preset] body.theme-light` → `body` 仍是亮色变量。
+- `:root` 上写死 `--ag-wax-seal-hover: #74221A` → 暗色蜡封回退永远用不到 `#C46A58`。亮色默认只放在 `html:not([data-ag-scheme="dark"])`。
+
+### 5. Good/Base/Bad Cases
+
+- Good：IDE 为暗色时面板底色 `rgb(28, 25, 23)`；配置 `scheme=light` 后同一暗色 URL 变成 `rgb(252, 252, 251)`。
+- Base：没有 `hostTheme` 也没有主题类，结果是 `light`。
+- Bad：把 `vintage-deep` 的 `#FBF9F5` 改成暗色。
+
+### 6. Tests Required
+
+没有单测。客户端开着时用 CDP 读 `data-ag-scheme`、`backgroundColor`、输入框和侧栏计算样式。`vscode-webview://` 预览 iframe 的这两个属性必须是 `null`。词典仍是 450 条。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+只给 `body` 设 `background`，或者复制一整份暗色选择器。
+
+#### Correct
+
+亮色预设继续写原来的变量。暗色块放在预设之后，选择器包含 `html[data-ag-scheme="dark"] body.theme-light`，组件只引用变量。
 
 ## 词典
 

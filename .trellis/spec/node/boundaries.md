@@ -20,7 +20,7 @@
 2. **同一版本重复安装不冲掉 `core.prev/`。** 只有已安装 `core/manifest.json` 与待安装清单的 SHA-256 不同才备份到 `backups/<timestamp>/` 并刷新 `core.prev/`。
 3. **`uninstall` 只停服务。** 保留已安装的 `user/`。不要把卸载写成删目录。
 
-`user/config.json` 只在字段缺失，或 CLI 显式传入 `--channel` / `--preset` 时补写。不要整文件重置。
+`user/config.json` 只在字段缺失，或 CLI 显式传入 `--channel` / `--preset` / 合法 `--scheme` 时补写。`scheme` 只接受 `auto`、`light`、`dark`；非法命令行值不落盘。不要整文件重置。
 
 ## 禁止
 

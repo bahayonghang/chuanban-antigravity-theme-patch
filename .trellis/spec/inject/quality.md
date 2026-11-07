@@ -30,7 +30,7 @@ node install.mjs verify --safe-mode
 ## 审查时看这些
 
 - 文件仍以 `})(__AG_BOOT_PAYLOAD__);` 结尾，守护进程的 `replace` 还能对上。
-- 顶层窗口判断还在。
+- 非 Agent 面板的子 iframe 仍会在开头返回。
 - 新的 `window.__ag_*` 句柄在再次注入前会被清掉。
 - 新词典键是普通英文短语，查找仍要求 `typeof === 'string'`。
 - 新 CSS 能被 `themeVars` 覆盖的部分使用变量，而不是把颜色只写死在一处又在 `custom.css` 里复制一份。

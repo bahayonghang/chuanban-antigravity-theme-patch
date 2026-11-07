@@ -43,7 +43,7 @@
 
 ## Quality Check
 
-- [ ] 子 iframe 仍在开头 `window.top !== window` 时直接 return
+- [ ] 非 Agent 面板的子 iframe 仍在开头返回。Agent 面板只限本机 `http:` / `https:`，且查询串有 `extensionView=true` 或 `hostTheme`
 - [ ] `enabled: false` 仍会卸掉样式节点、指标胶囊和已翻译文本
 - [ ] `user/custom.js` 仍在独立 `try/catch` 里，失败只打 `[Antigravity Patch] Error in user/custom.js`
 - [ ] 改了 `runtime.js` / `theme.css` / `i18n.json` 后跑了 `node install.mjs build-manifest`
