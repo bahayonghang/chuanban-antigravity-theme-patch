@@ -68,7 +68,7 @@ node install.mjs build-manifest
 - 部署和改装先读 `SKILL.md`，再调用现成的 `install.mjs`。
 - 用户的配色、字号、词条、追加 CSS、前端钩子只写已安装目录的 `user/config.json`、`user/custom.css`、`user/i18n.override.json`、`user/custom.js`。
 - `custom.css` 写原生 CSS，不要做反斜杠转义。`i18n.override.json` 用扁平 `"英文原文": "中文"`，或包在 `"exact"` 里。
-- 预设只用 `"high-contrast"`、`"claude-desktop-purewhite"`、`"vintage-deep"`。`modules` 可别名 `features`，`metrics` 可别名 `metricsCapsule`。
+- 预设只用 `"high-contrast"`、`"claude-desktop-purewhite"`、`"vintage-deep"`。`scheme` 只允许 `auto`、`light`、`dark`。`modules` 可别名 `features`，`metrics` 可别名 `metricsCapsule`。
 - 关闭整套补丁时把已安装 `user/config.json` 的 `"enabled"` 设为 `false`，不要去删客户端文件。
 
 先问再做：

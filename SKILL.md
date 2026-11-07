@@ -93,7 +93,7 @@ node install.mjs install --channel stable
 1. 生成并校验 `core/manifest.json` SHA-256 完整性；
 2. 当检测到已安装的 `core/` 与新版本哈希不同时，自动将旧版备份至 `~/.gemini/antigravity/theme-patch/backups/<timestamp>/` 与 `core.prev/`（重复安装同一版本不会冲掉上一版快照）；
 3. 原子更新 `core/` 内核，**初始化或无损保留已有的 `user/` 改装文件**；
-4. 自动检查并修补 `~/.antigravity/argv.json`（及 `~/.antigravity-insiders/argv.json`，注入 `"remote-debugging-port": 9222`）；
+4. 自动检查并修补 `~/.antigravity/argv.json` 与 `~/.antigravity-insiders/argv.json`。`channel=auto` 且 `~/.antigravity-ide/` 已存在时，同样修补其中的 `argv.json`（注入 `"remote-debugging-port": 9222`）；
 5. 自动生成 `~/.gemini/antigravity/scripts/antigravity-font-daemon.mjs` 兼容包装入口，并注册/更新系统后台自启服务（macOS `LaunchAgent` / Linux `systemd --user` / Windows Startup VBS）。
 
 ### Step 3：CDP 实机注入验收
@@ -115,6 +115,7 @@ node install.mjs verify
   "enabled": true,
   "channel": "auto",
   "preset": "high-contrast",
+  "scheme": "auto",
   "contextLimit": 256000,
   "modules": {
     "i18n": true,
@@ -130,7 +131,8 @@ node install.mjs verify
   }
 }
 ```
-- **`preset`**：支持 `"high-contrast"`（默认高对比暖白）、`"claude-desktop-purewhite"`（ClaudeDesktop 净白）、`"vintage-deep"`（复古深色羊皮纸），修改保存后 2.5 秒内自动热切换。
+- **`preset`**：支持 `"high-contrast"`（默认高对比暖白）、`"claude-desktop-purewhite"`（ClaudeDesktop 净白）、`"vintage-deep"`（复古深色羊皮纸），修改保存后 2.5 秒内自动热切换。三套都是亮色，不要把 `vintage-deep` 改成暗色。
+- **`scheme`**：只允许 `"auto"`、`"light"`、`"dark"`。`auto` 跟随 Agent 面板 URL 的 `hostTheme`，没有这个参数时再看 `theme-dark` / `theme-light` 和 `localStorage` 的 `theme-mode`，最后回退亮色。`light` 或 `dark` 强制该模式，约 2.5 秒热切换。切换 IDE 主题后，若面板 URL 里的 `hostTheme` 没变，重载 Agent 面板即可；不要为此另写消息通道。`auto` 还会在目录存在时探测 Antigravity IDE：`~/.antigravity-ide/argv.json`、`%APPDATA%/Antigravity IDE/DevToolsActivePort`、`~/.gemini/antigravity-ide/conversations`。`stable` 与 `insiders` 不改道。
 - **`modules`（亦兼容别名 `features`，其中 `metrics` 兼容别名 `metricsCapsule`）**：支持单独开关任意子模块；若将顶层 `"enabled": false` 保存，页面将在 2.5 秒内无损卸载全部样式并将已汉化的界面文字还原为英文原貌。
 - **`themeVars`**：任何 CSS 变量键值都会自动挂载到 `document.documentElement`（`<html>` 根节点），删除键时自动清理。
 
@@ -170,7 +172,8 @@ node install.mjs rollback
      node install.mjs install-fonts --from "C:\path\to\extracted-fonts"
      ```
 2. **首次开启 CDP 端口 (`9222`) 后的客户端重启**：
-   - `node install.mjs install` 会自动在 `%USERPROFILE%\.antigravity\argv.json` 中注入 `"remote-debugging-port": 9222`。
+   - `node install.mjs install` 会自动在 `%USERPROFILE%\.antigravity\argv.json` 中注入 `"remote-debugging-port": 9222`。`channel=auto` 且本机已有 `%USERPROFILE%\.antigravity-ide\` 时，同样处理这份 IDE 的 `argv.json`。
+   - Antigravity IDE 1.107.0 只写 `argv.json` 并不会打开 9222。需要完全退出后，用 `--remote-debugging-port=9222` 重新启动 `Antigravity IDE.exe`。Agent 面板端口不固定，来源白名单保持 `http://127.0.0.1` 这一前缀，不要写成某一个端口。
    - 若安装前 Antigravity 已经处于打开状态，首次修补 `argv.json` 后需引导用户**完全退出并重新打开一次 Antigravity**（或帮用户在 Antigravity 桌面快捷方式 `.lnk` 的目标末尾追加 `--remote-debugging-port=9222`），之后 `node install.mjs verify` 即可自动连通 `DevToolsActivePort` 或 `127.0.0.1:9222`。
 3. **第三方安全软件拦截 `.vbs` 自启时的备选方案**：
    - `install.mjs` 默认同时通过 `Startup\AntigravityThemeDaemon.vbs`、`HKCU\...\Run` 注册表以及 detached `node.exe` 子进程启动守护。
