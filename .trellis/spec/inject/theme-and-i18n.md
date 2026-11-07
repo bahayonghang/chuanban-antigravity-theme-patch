@@ -1,0 +1,77 @@
+# 主题 CSS 与汉化词典
+
+## CSS 放哪
+
+| 层 | 文件 | 挂载点 |
+|----|------|--------|
+| 内核 | `core/theme.css` | `#ag-custom-fonts`，整份 `textContent` 替换 |
+| 用户追加 | `user/custom.css` 或已安装副本 | `#antigravity-user-custom-style`，排在内核样式之后 |
+
+`custom.css` 写原生 CSS。不要做反斜杠转义，不要包成 JS 字符串。
+
+内核样式靠具体选择器和 `!important` 压过客户端，而不是靠再包一层 CSS-in-JS。改选择器时同时看 `user/config.json` 的 `selectors`：`inputBoxId`、`branchPillInBox`、`homeGreeting`、`excludeI18n`。运行时用 `Object.assign` 盖默认值，所以用户只覆盖要改的键。
+
+## 字体与四层分工
+
+`core/theme.css` 开头用 `@font-face` 的 `local()` 指向已安装的 Anthropic 家族，不把字体文件打进仓库。回退链里带更纱黑体（`Sarasa UI SC`、`更纱黑体 UI SC` 等）。
+
+现有分工：
+
+1. UI：`Anthropic Sans` / 更纱 UI，变量 `--font-sans`。
+2. 对话正文与 Markdown：`Anthropic Serif`，选择器 `.select-text, .prose, .markdown, article`。
+3. 代码、终端、文件名：`Anthropic Mono` / Sarasa Mono，选择器含 `code, pre, .monaco-editor, .xterm`。
+
+字重刻度固定为 300/400/500/600/700/900。不要把 Insiders 的 250/350/450 写回来。注释在 `:root` 那段。
+
+Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs install-fonts --from <目录>`，它会写当前用户字体注册表。
+
+## 预设与蜡封
+
+预设写在 `<html data-ag-preset>` 上。合法用户配置值只有三个：
+
+- `high-contrast`（样式里同时认历史别名 `chuanban-warm-white`）
+- `claude-desktop-purewhite`（同时认 `claude-desktop-official`）
+- `vintage-deep`（同时认 `absoulutely-chuanban`，拼写是源码里的历史值，不要「修正」后删掉旧选择器）
+
+新预设要同时加：`runtime.js` 里的预设同步、`theme.css` 里带旧别名的选择器、以及 `user/custom.js` 头注释里的联合类型。不要只改其中一处。
+
+蜡封三态是纯 CSS，不靠 JS 轮询：
+
+- 首页：`html:has([data-testid="home-greeting"])`，默认透明，悬停/聚焦才出淡蜡封。
+- 会话里：输入框常驻淡蜡封，悬停/聚焦用 `--ag-wax-seal-hover`（默认 `#74221A`）。
+- 关蜡封是 `data-ag-wax-seal="off"`，对应模块 `composerWaxSeal: false`。
+
+改颜色优先加 CSS 变量，让 `user/config.json` 的 `themeVars` 能覆盖。变量写到 `documentElement`，删除键时运行时会 `removeProperty`。
+
+## 词典
+
+`core/i18n.json` 是扁平 JSON：`"英文原文": "中文"`。运行时：
+
+```js
+const DICT = Object.assign(Object.create(null), boot.i18nDict || {});
+```
+
+因此：
+
+- 不要添加 `toString`、`valueOf`、`constructor`、`__proto__` 这类会撞原型的键。空原型对象让普通键安全，但不要依赖原型方法，查找结果必须 `typeof replacement === 'string'`。
+- 键用界面上真实出现的英文，含大小写。句尾多一个 `.` 时，运行时会回退到不带点的键，并把中文句号补上。
+- 带数字的句子用 `runtime.js` 里已有的模块级正则（`RE_FILES_CHANGED`、`RE_WORKED_FOR` 等），不要每条词条各编译一个 `new RegExp`。
+- 不翻译 `selectors.excludeI18n` 盖住的节点：`code, pre, kbd, samp, textarea, input`、对话正文、文件标题、侧栏会话行、指标胶囊自身。默认串在 `user/config.json`。
+
+覆盖层是 `user/i18n.override.json`。扁平对象或 `{ "exact": { ... } }` 都可以。`normalizeOverrideDict()` 会丢掉 `_` 开头的键（所以 `_comment` 可以留），非字符串值也会丢掉。下划线键不会进入词典。
+
+译文要能还原：原文存在 WeakMap 里。新增翻译时走现有的 `origTextMap`，不要直接改 `nodeValue` 而不记原始值，否则热重载和 `enabled: false` 还原不回去。
+
+## 反模式
+
+- 在 `custom.css` 里写 `content: "\4e2d\6587"` 这类转义来绕过「零转义」约定。
+- 翻译代码块、终端、对话正文或 `config.json` 本身。
+- 删掉预设的历史别名选择器，导致旧 `data-ag-preset` 值丢样式。
+- 为蜡封状态加 `setInterval` 去改 class。现有路径是 CSS `:has`。
+
+## 参考
+
+- `core/theme.css` 开头字体段、`html[data-ag-preset=...]` 段、`--ag-wax-seal-hover`
+- `core/i18n.json` 顶部词条
+- `core/runtime.js`：`DICT`、`EXCLUDE_SELECTOR`、`computeTextTranslation`
+- `core/daemon.mjs`：`normalizeOverrideDict`
