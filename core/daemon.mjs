@@ -10,7 +10,8 @@
  *    - 周期性检测 `user/config.json`、`user/custom.css`、`user/i18n.override.json`、`user/custom.js` 的 mtime，
  *      用户或对方 Agent 修改 `user/` 层后 2.5 秒内自动重新构建签名并热更新至所有打开的 Antigravity 窗口。
  * 3. 双通道同进程共生：
- *    - 默认 `channel: "auto"` 同时探测 Stable 与 Insiders 调试端口（亦可通过 `--channel stable|insiders` 锁定单通道）。
+ *    - 默认 `channel: "auto"` 同时探测 Stable 与 Insiders；目录已存在时再附加 Antigravity IDE。
+ *      `--channel stable|insiders` 仍只锁定原通道。
  * 4. 安全模式隔离：
  *    - 支持 `--safe-mode` 启动参数，一键绕过 `user/` 改装层，仅加载 `core/` 黄金内核用于故障定界。
  */
@@ -117,9 +118,60 @@ function resolveChannelPaths(singleChannel = 'stable', userCfg = {}) {
   };
 }
 
+function normalizeScheme(value) {
+  return value === 'light' || value === 'dark' || value === 'auto' ? value : 'auto';
+}
+
+function idePortFilePath() {
+  const home = os.homedir();
+  const appDirName = 'Antigravity IDE';
+  if (process.platform === 'darwin') {
+    return path.join(home, 'Library', 'Application Support', appDirName, 'DevToolsActivePort');
+  }
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    return path.join(appData, appDirName, 'DevToolsActivePort');
+  }
+  const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+  return path.join(xdgConfig, appDirName, 'DevToolsActivePort');
+}
+
+function resolveIdeEndpoint() {
+  const home = os.homedir();
+  const dotDir = path.join(home, '.antigravity-ide');
+  const portFile = idePortFilePath();
+  const conversationsDir = path.join(home, '.gemini', 'antigravity-ide', 'conversations');
+  if (!fs.existsSync(dotDir) && !fs.existsSync(portFile) && !fs.existsSync(conversationsDir)) return null;
+
+  let fallbackPort = 9222;
+  try {
+    const argvPath = path.join(dotDir, 'argv.json');
+    if (fs.existsSync(argvPath)) {
+      const m = fs.readFileSync(argvPath, 'utf8').match(/"remote-debugging-port"\s*:\s*(\d+)/);
+      if (m && parseInt(m[1], 10) > 0) fallbackPort = parseInt(m[1], 10);
+    }
+  } catch {}
+
+  return {
+    channel: 'ide',
+    portFile,
+    fallbackPort,
+    channelInstalled: true,
+    conversationsDir
+  };
+}
+
+function withoutSingleTargetOverrides(userCfg = {}) {
+  const next = Object.assign({}, userCfg);
+  delete next.portFile;
+  delete next.conversationsDir;
+  delete next.fallbackPort;
+  return next;
+}
+
 function resolveActiveChannelEndpoints(channelMode = 'auto', userCfg = {}) {
-  const explicitPortFile = getArg('--port-file', userCfg.portFile || '');
-  if (explicitPortFile) {
+  const cliPortFile = getArg('--port-file', '');
+  if (cliPortFile) {
     const ch = channelMode === 'insiders' ? 'insiders' : 'stable';
     return [resolveChannelPaths(ch, userCfg)];
   }
@@ -129,8 +181,12 @@ function resolveActiveChannelEndpoints(channelMode = 'auto', userCfg = {}) {
   if (channelMode === 'insiders') {
     return [resolveChannelPaths('insiders', userCfg)];
   }
-  // 'auto' 或 'both'：同时轮询 Stable 与 Insiders 两个通道，互不抢占
-  return [resolveChannelPaths('stable', userCfg), resolveChannelPaths('insiders', userCfg)];
+  // auto：经典版与 IDE 各自用自己的端口和会话目录。配置里的 portFile 不能把另一套挤掉。
+  const shared = withoutSingleTargetOverrides(userCfg);
+  const endpoints = [resolveChannelPaths('stable', shared), resolveChannelPaths('insiders', shared)];
+  const ide = resolveIdeEndpoint();
+  if (ide) endpoints.push(ide);
+  return endpoints;
 }
 
 // ============================================================================
@@ -205,6 +261,7 @@ function rebuildBundleIfNeeded() {
   const enabled = SAFE_MODE ? true : userCfg.enabled !== false;
   const channel = CLI_CHANNEL || userCfg.channel || 'auto';
   const preset = userCfg.preset || 'high-contrast';
+  const scheme = normalizeScheme(userCfg.scheme);
   const contextLimit = Number(userCfg.contextLimit) > 0 ? Number(userCfg.contextLimit) : 256000;
 
   const rawModules = Object.assign({}, userCfg.features || {}, userCfg.modules || {});
@@ -234,6 +291,7 @@ function rebuildBundleIfNeeded() {
     enabled,
     channel,
     preset,
+    scheme,
     contextLimit,
     modules,
     themeVars,
@@ -263,7 +321,7 @@ function rebuildBundleIfNeeded() {
     .update(customCss)
     .update(JSON.stringify(mergedDict))
     .update(customJs)
-    .update(JSON.stringify({ preset, modules, themeVars, selectors: activeConfig.selectors }))
+    .update(JSON.stringify({ preset, scheme, modules, themeVars, selectors: activeConfig.selectors }))
     .digest('hex')
     .slice(0, 8);
 
@@ -275,6 +333,7 @@ function rebuildBundleIfNeeded() {
     platform: process.platform,
     enabled,
     preset,
+    scheme,
     cssText: baseCss,
     customCss,
     themeVars,
@@ -286,6 +345,7 @@ function rebuildBundleIfNeeded() {
       enabled,
       channel,
       preset,
+      scheme,
       contextLimit,
       modules,
       themeVars
@@ -638,6 +698,27 @@ function isAllowedOrigin(urlStr) {
   return activeConfig.allowedOrigins.some((prefix) => urlStr.startsWith(prefix));
 }
 
+function isAgentPanelUrl(urlStr) {
+  try {
+    const url = new URL(urlStr);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return false;
+    return url.searchParams.get('extensionView') === 'true' || url.searchParams.has('hostTheme');
+  } catch {
+    return false;
+  }
+}
+
+function isInjectableTarget(target) {
+  if (!target || !target.webSocketDebuggerUrl) return false;
+  const url = String(target.url || '');
+  if (url.startsWith('devtools://')) return false;
+  if (!isAllowedOrigin(url)) return false;
+  if (String(target.title || '').includes('Launchpad')) return false;
+  if (target.type === 'page') return true;
+  return target.type === 'iframe' && isAgentPanelUrl(url);
+}
+
 function attachTarget(target, endpoint) {
   const wsUrl = target.webSocketDebuggerUrl;
   if (!wsUrl) return Promise.resolve(false);
@@ -865,14 +946,7 @@ async function sync() {
       }
       if (targets.length === 0) continue;
 
-      const pages = targets.filter(
-        (t) =>
-          t.type === 'page' &&
-          t.webSocketDebuggerUrl &&
-          !String(t.url || '').startsWith('devtools://') &&
-          isAllowedOrigin(t.url) &&
-          !String(t.title || '').includes('Launchpad')
-      );
+      const pages = targets.filter(isInjectableTarget);
 
       for (const page of pages) {
         activeTargetIds.add(page.id);

@@ -4,8 +4,19 @@
  * 由 core/daemon.mjs 读取并将文件末尾的启动载荷占位符替换为实时配置与资源对象。
  */
 ((boot) => {
-  // 0. 顶层窗口隔离：绝不注入 Artifact / HTML 预览等子 iframe
-  if (window.top !== window) return;
+  // 非顶层只放行本机 Agent 面板。Artifact / HTML 预览等子 iframe 仍不注入。
+  const isAgentPanelWindow = () => {
+    try {
+      const loc = window.location;
+      if (!loc || (loc.protocol !== 'http:' && loc.protocol !== 'https:')) return false;
+      if (loc.hostname !== '127.0.0.1' && loc.hostname !== 'localhost') return false;
+      const q = new URLSearchParams(loc.search || '');
+      return q.get('extensionView') === 'true' || q.has('hostTheme');
+    } catch (e) {
+      return false;
+    }
+  };
+  if (window.top !== window && !isAgentPanelWindow()) return;
   if (!boot || typeof boot !== 'object') return;
 
   const PATCH_VERSION = boot.version || '20261104-v5.0.0';
@@ -31,6 +42,7 @@
   MODULES.metricsCapsule = MODULES.metrics;
 
   const DEFAULT_PRESET = boot.preset || 'high-contrast';
+  const BOOT_SCHEME = boot.scheme === 'light' || boot.scheme === 'dark' || boot.scheme === 'auto' ? boot.scheme : 'auto';
   const SELECTORS = Object.assign(
     {
       inputBoxId: 'antigravity.agentSidePanelInputBox',
@@ -132,6 +144,7 @@
     }
     applyThemeVars({});
     document.documentElement.removeAttribute('data-ag-preset');
+    document.documentElement.removeAttribute('data-ag-scheme');
     document.documentElement.removeAttribute('data-ag-page-type');
     document.documentElement.removeAttribute('data-ag-wax-seal');
     restoreAllTranslations(document.body);
@@ -292,6 +305,33 @@
 
       if (document.documentElement.getAttribute('data-ag-preset') !== targetPreset) {
         document.documentElement.setAttribute('data-ag-preset', targetPreset);
+      }
+    } catch (e) {}
+    syncChuanbanScheme();
+  }
+
+  function resolveAgScheme() {
+    if (BOOT_SCHEME === 'light' || BOOT_SCHEME === 'dark') return BOOT_SCHEME;
+    try {
+      const hostTheme = new URLSearchParams(window.location.search || '').get('hostTheme');
+      if (hostTheme === 'dark' || hostTheme === 'light') return hostTheme;
+    } catch (e) {}
+    const body = document.body;
+    const root = document.documentElement;
+    if ((body && body.classList.contains('theme-dark')) || root.classList.contains('theme-dark')) return 'dark';
+    if ((body && body.classList.contains('theme-light')) || root.classList.contains('theme-light')) return 'light';
+    try {
+      const stored = Storage.prototype.getItem.call(localStorage, 'theme-mode');
+      if (stored === 'dark' || stored === 'light') return stored;
+    } catch (e) {}
+    return 'light';
+  }
+
+  function syncChuanbanScheme() {
+    try {
+      const next = resolveAgScheme();
+      if (document.documentElement.getAttribute('data-ag-scheme') !== next) {
+        document.documentElement.setAttribute('data-ag-scheme', next);
       }
     } catch (e) {}
   }
