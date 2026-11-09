@@ -62,7 +62,7 @@ chuanban-antigravity-theme-patch/
 │   ├── theme.css               # 纯正多行 CSS 样式表（挂载于 #ag-custom-fonts，含暖纸浅色、输入框 C/A/B 蜡封三态解耦）
 │   └── i18n.json               # 450 条标准 JSON 汉化基准词典（运行时挂载至 Object.create(null) 免疫原型键冲突）
 └── user/                       # 【用户改装层】升级时 100% 永不覆盖，守护进程每 2.5s 自动检测 mtimeMs 热重载注入！
-    ├── config.json             # 开关配置（enabled / channel / preset / modules(或 features) / themeVars 变量覆盖）
+    ├── config.json             # 开关配置（enabled / channel / preset / scheme / fonts / modules(或 features) / themeVars 变量覆盖）
     ├── custom.css              # 用户/对方 Agent 自定义追加 CSS（独立挂载于 #antigravity-user-custom-style）
     ├── i18n.override.json      # 用户自定义词条覆盖或新增（支持扁平键值对或 "exact": { ... }，优先级高于 core/i18n.json）
     └── custom.js               # 开放的前端自定义 JS 钩子（在 core/runtime.js 之后于独立 try/catch 沙箱内安全执行）
@@ -117,8 +117,12 @@ node install.mjs verify
   "preset": "high-contrast",
   "scheme": "auto",
   "contextLimit": 256000,
+  "fonts": {
+    "ui": "wenyuan-serif",
+    "code": "maple-bright"
+  },
   "modules": {
-    "i18n": true,
+    "i18n": false,
     "metrics": true,
     "composerWaxSeal": true,
     "deadlockHealer": true,
@@ -133,7 +137,8 @@ node install.mjs verify
 ```
 - **`preset`**：支持 `"high-contrast"`（默认高对比暖白）、`"claude-desktop-purewhite"`（ClaudeDesktop 净白）、`"vintage-deep"`（复古深色羊皮纸），修改保存后 2.5 秒内自动热切换。三套都是亮色，不要把 `vintage-deep` 改成暗色。
 - **`scheme`**：只允许 `"auto"`、`"light"`、`"dark"`。`auto` 跟随 Agent 面板 URL 的 `hostTheme`，没有这个参数时再看 `theme-dark` / `theme-light` 和 `localStorage` 的 `theme-mode`，最后回退亮色。`light` 或 `dark` 强制该模式，约 2.5 秒热切换。Agents 整窗跟随 `theme-dark` / `theme-light` 类变化，不必为此重载窗口。切换 IDE 主题后，若面板 URL 里的 `hostTheme` 没变，重载 Agent 面板即可；不要为此另写消息通道。`auto` 还会在目录存在时探测 Antigravity IDE：`~/.antigravity-ide/argv.json`、`%APPDATA%/Antigravity IDE/DevToolsActivePort`、`~/.gemini/antigravity-ide/conversations`。`stable` 与 `insiders` 不改道。
-- **`modules`（亦兼容别名 `features`，其中 `metrics` 兼容别名 `metricsCapsule`）**：支持单独开关任意子模块；若将顶层 `"enabled": false` 保存，页面将在 2.5 秒内无损卸载全部样式并将已汉化的界面文字还原为英文原貌。
+- **`fonts`**：`ui` 只允许 `wenyuan-serif`（默认，家族名 `WenYuan Serif SC`）、`wenyuan-sans`、`anthropic`、`system`。`code` 只允许 `maple-bright`（默认，家族名 `MapleBright`）、`maple-mono`、`anthropic`、`sarasa`。缺字段、空字符串或其他值分别回到这两个默认 id，安装不会因此失败。外观字体覆盖界面控件和对话正文；代码字体覆盖代码、终端、文件名和输入框。Antigravity 原生字体下拉（System UI / Inter / Google Sans）不控制补丁字体。
+- **`modules`（亦兼容别名 `features`，其中 `metrics` 兼容别名 `metricsCapsule`）**：支持单独开关任意子模块。`i18n` 默认 `false`。若将顶层 `"enabled": false` 保存，页面将在 2.5 秒内无损卸载全部样式并将已汉化的界面文字还原为英文原貌。
 - **`themeVars`**：任何 CSS 变量键值都会自动挂载到 `document.documentElement`（`<html>` 根节点），删除键时自动清理。
 
 ### 2. 追加或微调界面 CSS（编辑 `user/custom.css`）

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "核对没有把字体文件入库，正文和输入框已改读变量"}
+{"file": ".trellis/spec/inject/runtime.md", "reason": "核对卸载会删字体属性，i18n 缺省与还原路径还在"}
+{"file": ".trellis/spec/inject/user-layer.md", "reason": "核对安装没有覆盖已有合法字体值和 i18n 布尔"}
+{"file": ".trellis/spec/node/boundaries.md", "reason": "核对 manifest 由 build-manifest 重写"}
+{"file": ".trellis/tasks/11-09-font-choices-en/research/font-and-i18n.md", "reason": "用实机下拉和字体层锚点对照，避免修错表面"}

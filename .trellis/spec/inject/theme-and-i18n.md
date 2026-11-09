@@ -13,17 +13,61 @@
 
 ## 字体与四层分工
 
-`core/theme.css` 开头用 `@font-face` 的 `local()` 指向已安装的 Anthropic 家族，不把字体文件打进仓库。回退链里带更纱黑体（`Sarasa UI SC`、`更纱黑体 UI SC` 等）。
+补丁字体不看原生 `data-agy-font`。`@font-face` 继续只用 `local()`，不把字体文件打进仓库。
 
-现有分工：
+`fonts` 是闭合目录：
 
-1. UI：`Anthropic Sans` / 更纱 UI，变量 `--font-sans`。
-2. 对话正文与 Markdown：`Anthropic Serif`，选择器 `.select-text, .prose, .markdown, article`。
-3. 代码、终端、文件名：`Anthropic Mono` / Sarasa Mono，选择器含 `code, pre, .monaco-editor, .xterm`。
+- `fonts.ui`：`wenyuan-serif`（默认，`WenYuan Serif SC`，保留现有中文回退）、`wenyuan-sans`、`anthropic`、`system`。覆盖界面控件和对话正文，变量 `--font-sans`。
+- `fonts.code`：`maple-bright`（默认，`MapleBright`，保留等宽回退）、`maple-mono`、`anthropic`、`sarasa`。覆盖代码、终端、文件名和输入框，变量 `--font-mono`。
+
+缺字段、空字符串或其他值分别回到这两个默认 id。目录规则必须放在 Anthropic `!important` 之后，选择器压过 `body[data-agy-font="google-sans"]`，否则变量仍停在 Anthropic。原生字体下拉不控制这两层。对话正文和输入框读变量，不要再写死家族名。
 
 字重刻度固定为 300/400/500/600/700/900。不要把 Insiders 的 250/350/450 写回来。注释在 `:root` 那段。
 
-Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs install-fonts --from <目录>`，它会写当前用户字体注册表。
+Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs install-fonts --from <目录>`，它会写当前用户字体注册表。`WenYuan` / `MapleBright` 不由这个命令下载。
+
+## Scenario: 字体目录
+
+### 1. Scope / Trigger
+
+换外观或代码字体时，改已安装 `user/config.json` 的 `fonts`，不要改原生下拉，也不要让 `data-agy-font` 驱动补丁字体。
+
+### 2. Signatures
+
+- `fonts.ui`：`wenyuan-serif` | `wenyuan-sans` | `anthropic` | `system`
+- `fonts.code`：`maple-bright` | `maple-mono` | `anthropic` | `sarasa`
+- 页面属性：`data-ag-font-ui`、`data-ag-font-code`
+
+### 3. Contracts
+
+守护进程把合法 id 放进 `boot.fonts` 和 `boot.config.fonts`。内容哈希对象必须包含 `fonts`。`enabled: false` 时连同现有属性删掉这两个 data 属性。
+
+### 4. Validation & Error Matrix
+
+- 目录规则放在 Anthropic `!important` 前面，或选择器压不过 `body[data-agy-font="google-sans"]` → 计算字体仍是 Anthropic。
+- 哈希不含 `fonts` → 只改字体 id 不会热重载。
+- 非法 id 写成空字体栈 → 页面丢字。必须回退默认 id。
+
+### 5. Good/Base/Bad Cases
+
+- Good：默认 id 下，界面和对话正文包含 `WenYuan Serif SC`，代码、终端、文件名和输入框包含 `MapleBright`。
+- Base：缺 `fonts` 时同样是这两个默认 id。
+- Bad：切原生下拉指望补丁字体跟着变。
+
+### 6. Tests Required
+
+没有单测。客户端开着时用 CDP 读计算字体。改 id 后约 2.5 秒应离开旧家族，测完改回默认。词典仍是 450 条。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+往原生字体菜单注入选项，或把任意 CSS 字体串写进 `fonts.ui`。
+
+#### Correct
+
+只接受目录 id。家族名留在 `theme.css` 的目录规则里。
+
 
 ## 预设与蜡封
 

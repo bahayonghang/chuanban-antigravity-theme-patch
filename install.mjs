@@ -738,6 +738,15 @@ async function runInstall() {
   } else if (currentCfg.scheme !== 'light' && currentCfg.scheme !== 'dark' && currentCfg.scheme !== 'auto') {
     currentCfg.scheme = 'auto';
   }
+  // 字体 id 缺失或非法才写入默认值。已有布尔 modules.i18n 不在这里改写。
+  const UI_FONT_IDS = ['wenyuan-serif', 'wenyuan-sans', 'anthropic', 'system'];
+  const CODE_FONT_IDS = ['maple-bright', 'maple-mono', 'anthropic', 'sarasa'];
+  if (!currentCfg.fonts || typeof currentCfg.fonts !== 'object' || Array.isArray(currentCfg.fonts)) {
+    currentCfg.fonts = { ui: 'wenyuan-serif', code: 'maple-bright' };
+  } else {
+    if (UI_FONT_IDS.indexOf(currentCfg.fonts.ui) === -1) currentCfg.fonts.ui = 'wenyuan-serif';
+    if (CODE_FONT_IDS.indexOf(currentCfg.fonts.code) === -1) currentCfg.fonts.code = 'maple-bright';
+  }
   fs.writeFileSync(userConfigPath, JSON.stringify(currentCfg, null, 2) + '\n', 'utf8');
 
   // 自动检查并修补 ~/.antigravity/argv.json (remote-debugging-port)

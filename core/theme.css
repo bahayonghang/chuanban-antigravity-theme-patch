@@ -55,6 +55,71 @@
   --agy-gsf-bold-wght: 600 !important;
 }
 
+/* 字体目录：放在上面的 Anthropic !important 之后。html+body 选择器压过 body[data-agy-font="google-sans"]。原生下拉不控制这两层。 */
+html[data-ag-font-ui="wenyuan-serif"],
+html[data-ag-font-ui="wenyuan-serif"] body,
+html[data-ag-font-ui="wenyuan-serif"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+  --font-sans: 'WenYuan Serif SC', system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', serif !important;
+  --vscode-font-family: var(--font-sans) !important;
+  --default-font-family: var(--font-sans) !important;
+}
+
+html[data-ag-font-ui="wenyuan-sans"],
+html[data-ag-font-ui="wenyuan-sans"] body,
+html[data-ag-font-ui="wenyuan-sans"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+  --font-sans: 'WenYuan Sans SC', system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif !important;
+  --vscode-font-family: var(--font-sans) !important;
+  --default-font-family: var(--font-sans) !important;
+}
+
+html[data-ag-font-ui="anthropic"],
+html[data-ag-font-ui="anthropic"] body,
+html[data-ag-font-ui="anthropic"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+  --font-sans: 'Anthropic Sans', 'Anthropic Sans Web', 'Anthropic Sans Web Text', 'anthropic-sans', 'Styrene B', 'Styrene', system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif !important;
+  --vscode-font-family: var(--font-sans) !important;
+  --default-font-family: var(--font-sans) !important;
+}
+
+html[data-ag-font-ui="system"],
+html[data-ag-font-ui="system"] body,
+html[data-ag-font-ui="system"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif !important;
+  --vscode-font-family: var(--font-sans) !important;
+  --default-font-family: var(--font-sans) !important;
+}
+
+html[data-ag-font-code="maple-bright"],
+html[data-ag-font-code="maple-bright"] body,
+html[data-ag-font-code="maple-bright"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+  --font-mono: 'MapleBright', 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
+  --editor-font-family: var(--font-mono) !important;
+  --default-mono-font-family: var(--font-mono) !important;
+}
+
+html[data-ag-font-code="maple-mono"],
+html[data-ag-font-code="maple-mono"] body,
+html[data-ag-font-code="maple-mono"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+  --font-mono: 'Maple Mono NF CN', 'Maple Mono', 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
+  --editor-font-family: var(--font-mono) !important;
+  --default-mono-font-family: var(--font-mono) !important;
+}
+
+html[data-ag-font-code="anthropic"],
+html[data-ag-font-code="anthropic"] body,
+html[data-ag-font-code="anthropic"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+  --font-mono: 'Anthropic Mono', 'Anthropic Mono Web', 'anthropic-mono', 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
+  --editor-font-family: var(--font-mono) !important;
+  --default-mono-font-family: var(--font-mono) !important;
+}
+
+html[data-ag-font-code="sarasa"],
+html[data-ag-font-code="sarasa"] body,
+html[data-ag-font-code="sarasa"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+  --font-mono: 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', 'Anthropic Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
+  --editor-font-family: var(--font-mono) !important;
+  --default-mono-font-family: var(--font-mono) !important;
+}
+
 /* 基础全局字重与平滑度：保证无衬线体基底扎实、对齐稳定版 400 */
 body, body[data-agy-font], body[data-agy-font="google-sans"] {
   font-weight: 400 !important;
@@ -66,9 +131,9 @@ html, body, body[data-agy-font], button, select, nav, header, aside {
   -webkit-font-smoothing: antialiased;
 }
 
-/* 2. 对话正文与 Markdown 内容：Claude 标志性 Anthropic Serif 衬线 + 更纱粗衬线/黑体 */
+/* 2. 对话正文与 Markdown：跟外观字体，不再写死 Anthropic Serif */
 .select-text, .prose, .markdown, article, .select-text :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, strong, em, span, div) {
-  font-family: 'Anthropic Serif', 'Anthropic Serif Web', 'Anthropic Serif Web Text Light', 'anthropic-serif', 'Tiempos Text', 'Tiempos', Georgia, Cambria, 'Times New Roman', 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', 'Sarasa Gothic SC', '更纱黑体 SC', 'PingFang SC', serif;
+  font-family: var(--font-sans) !important;
   letter-spacing: -0.003em;
 }
 
@@ -81,9 +146,9 @@ code, pre, kbd, samp, .font-mono, [class*="language-"], .monaco-editor, .xterm, 
   font-family: var(--font-mono) !important;
 }
 
-/* 4. 输入框编辑区：Codex 同款等距更纱黑体 SLAB (Sarasa Mono Slab SC) */
+/* 4. 输入框编辑区：跟代码字体，不再写死更纱 Slab */
 div[contenteditable="true"], textarea, div[contenteditable="true"] :is(p, span, div), [data-composer], .ProseMirror, .ProseMirror :is(p, span) {
-  font-family: 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', 'Anthropic Mono', ui-monospace, monospace !important;
+  font-family: var(--font-mono) !important;
 }
 
 /* 5. 配色版本 3: 复古深色 (absoulutely-chuanban) */

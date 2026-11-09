@@ -20,7 +20,7 @@
 2. **同一版本重复安装不冲掉 `core.prev/`。** 只有已安装 `core/manifest.json` 与待安装清单的 SHA-256 不同才备份到 `backups/<timestamp>/` 并刷新 `core.prev/`。
 3. **`uninstall` 只停服务。** 保留已安装的 `user/`。不要把卸载写成删目录。
 
-`user/config.json` 只在字段缺失，或 CLI 显式传入 `--channel` / `--preset` / 合法 `--scheme` 时补写。`scheme` 只接受 `auto`、`light`、`dark`；非法命令行值不落盘。不要整文件重置。
+`user/config.json` 只在字段缺失或非法时补写：`--channel` / `--preset` / 合法 `--scheme`，以及 `fonts.ui` / `fonts.code`。`scheme` 只接受 `auto`、`light`、`dark`。字体 id 不在目录里就写成默认 id，不让安装失败。已有布尔 `modules.i18n` 不覆盖。不要整文件重置。
 
 ## 禁止
 

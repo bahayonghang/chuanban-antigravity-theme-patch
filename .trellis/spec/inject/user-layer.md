@@ -19,7 +19,8 @@
 - `preset`：只写 `high-contrast`、`claude-desktop-purewhite`、`vintage-deep`。
 - `scheme`：只写 `auto`、`light`、`dark`。缺字段或别的值在运行时当 `auto`。
 - `contextLimit`：默认 `256000`。非正数会被守护进程打回 256000。
-- `modules`：六个布尔开关。可以写成别名 `features`。`metrics` 可以写成 `metricsCapsule`，但同一份配置里不要两个都写不同值。
+- `fonts`：`ui` 只允许 `wenyuan-serif`、`wenyuan-sans`、`anthropic`、`system`，缺省 `wenyuan-serif`。`code` 只允许 `maple-bright`、`maple-mono`、`anthropic`、`sarasa`，缺省 `maple-bright`。空字符串或其他值也回退默认 id。原生字体下拉不控制这两层。
+- `modules`：六个布尔开关。可以写成别名 `features`。`metrics` 可以写成 `metricsCapsule`，但同一份配置里不要两个都写不同值。`i18n` 缺省 `false`；已有 `true` / `false` 安装时保留。
 - `themeVars`：CSS 变量名到字符串。空对象表示不覆盖。
 - `selectors`：只放需要替换的选择器。没写的键继续用 `runtime.js` 里的默认值。
 
@@ -40,7 +41,7 @@
 ## 反模式
 
 - 升级或重装时用仓库模板覆盖已安装的 `user/`。`install.mjs` 已经跳过已存在文件。
-- 为了关一个模块去改 `core/runtime.js` 的默认 `true`。用已安装 `config.json`。
+- 为了这一台机器关汉化，去把产品缺省改回 `true` 或改掉别人已有的布尔值。产品缺省已经是 `false`；单机开关只改已安装 `config.json`。
 - 在 `custom.js` 里重写汉化 walker 或再插一个 `#ag-custom-fonts`。
 - 把 `enabled` 设 `false` 还另外手动删 DOM。运行时那条卸载路径会做完。
 

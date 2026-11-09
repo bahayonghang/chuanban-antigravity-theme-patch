@@ -30,7 +30,7 @@
   }
   const MODULES = Object.assign(
     {
-      i18n: true,
+      i18n: false,
       metrics: true,
       composerWaxSeal: true,
       deadlockHealer: true,
@@ -43,6 +43,11 @@
 
   const DEFAULT_PRESET = boot.preset || 'high-contrast';
   const BOOT_SCHEME = boot.scheme === 'light' || boot.scheme === 'dark' || boot.scheme === 'auto' ? boot.scheme : 'auto';
+  const UI_FONT_IDS = ['wenyuan-serif', 'wenyuan-sans', 'anthropic', 'system'];
+  const CODE_FONT_IDS = ['maple-bright', 'maple-mono', 'anthropic', 'sarasa'];
+  const rawFontConfig = boot.fonts && typeof boot.fonts === 'object' && !Array.isArray(boot.fonts) ? boot.fonts : {};
+  const FONT_UI = UI_FONT_IDS.indexOf(rawFontConfig.ui) !== -1 ? rawFontConfig.ui : 'wenyuan-serif';
+  const FONT_CODE = CODE_FONT_IDS.indexOf(rawFontConfig.code) !== -1 ? rawFontConfig.code : 'maple-bright';
   const SELECTORS = Object.assign(
     {
       inputBoxId: 'antigravity.agentSidePanelInputBox',
@@ -164,9 +169,18 @@
     document.documentElement.removeAttribute('data-ag-scheme');
     document.documentElement.removeAttribute('data-ag-page-type');
     document.documentElement.removeAttribute('data-ag-wax-seal');
+    document.documentElement.removeAttribute('data-ag-font-ui');
+    document.documentElement.removeAttribute('data-ag-font-code');
     restoreAllTranslations(document.body);
     window.__ag_patch_version = PATCH_VERSION + '-disabled';
     return;
+  }
+
+  if (document.documentElement.getAttribute('data-ag-font-ui') !== FONT_UI) {
+    document.documentElement.setAttribute('data-ag-font-ui', FONT_UI);
+  }
+  if (document.documentElement.getAttribute('data-ag-font-code') !== FONT_CODE) {
+    document.documentElement.setAttribute('data-ag-font-code', FONT_CODE);
   }
 
   // ============================================================================

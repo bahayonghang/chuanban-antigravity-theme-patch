@@ -122,6 +122,22 @@ function normalizeScheme(value) {
   return value === 'light' || value === 'dark' || value === 'auto' ? value : 'auto';
 }
 
+const UI_FONT_IDS = ['wenyuan-serif', 'wenyuan-sans', 'anthropic', 'system'];
+const CODE_FONT_IDS = ['maple-bright', 'maple-mono', 'anthropic', 'sarasa'];
+
+function normalizeFontId(value, allowed, fallback) {
+  return allowed.indexOf(value) !== -1 ? value : fallback;
+}
+
+// 闭合目录。缺失、空串或其他值换成默认 id，不让安装或热重载失败。
+function normalizeFonts(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    ui: normalizeFontId(src.ui, UI_FONT_IDS, 'wenyuan-serif'),
+    code: normalizeFontId(src.code, CODE_FONT_IDS, 'maple-bright')
+  };
+}
+
 function idePortFilePath() {
   const home = os.homedir();
   const appDirName = 'Antigravity IDE';
@@ -202,7 +218,7 @@ let activeConfig = {
   preset: 'high-contrast',
   contextLimit: 256000,
   modules: {
-    i18n: true,
+    i18n: false,
     metrics: true,
     composerWaxSeal: true,
     deadlockHealer: true,
@@ -262,6 +278,7 @@ function rebuildBundleIfNeeded() {
   const channel = CLI_CHANNEL || userCfg.channel || 'auto';
   const preset = userCfg.preset || 'high-contrast';
   const scheme = normalizeScheme(userCfg.scheme);
+  const fonts = normalizeFonts(userCfg.fonts);
   const contextLimit = Number(userCfg.contextLimit) > 0 ? Number(userCfg.contextLimit) : 256000;
 
   const rawModules = Object.assign({}, userCfg.features || {}, userCfg.modules || {});
@@ -270,7 +287,7 @@ function rebuildBundleIfNeeded() {
   }
   const modules = Object.assign(
     {
-      i18n: true,
+      i18n: false,
       metrics: true,
       composerWaxSeal: true,
       deadlockHealer: true,
@@ -292,6 +309,7 @@ function rebuildBundleIfNeeded() {
     channel,
     preset,
     scheme,
+    fonts,
     contextLimit,
     modules,
     themeVars,
@@ -321,7 +339,7 @@ function rebuildBundleIfNeeded() {
     .update(customCss)
     .update(JSON.stringify(mergedDict))
     .update(customJs)
-    .update(JSON.stringify({ preset, scheme, modules, themeVars, selectors: activeConfig.selectors }))
+    .update(JSON.stringify({ preset, scheme, modules, themeVars, selectors: activeConfig.selectors, fonts }))
     .digest('hex')
     .slice(0, 8);
 
@@ -334,6 +352,7 @@ function rebuildBundleIfNeeded() {
     enabled,
     preset,
     scheme,
+    fonts,
     cssText: baseCss,
     customCss,
     themeVars,
@@ -346,6 +365,7 @@ function rebuildBundleIfNeeded() {
       channel,
       preset,
       scheme,
+      fonts,
       contextLimit,
       modules,
       themeVars

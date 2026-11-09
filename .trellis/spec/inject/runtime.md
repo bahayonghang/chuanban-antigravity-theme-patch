@@ -25,11 +25,11 @@ Artifact / HTML 预览之类的子 iframe 不注入。唯一例外是本机 Agen
 
 ## boot 与模块开关
 
-守护进程放进 boot 的字段包括 `version`、`platform`、`enabled`、`preset`、`scheme`、`cssText`、`customCss`、`themeVars`、`i18nDict`、`modules`、`features`（与 `modules` 同一对象）、`selectors`、`config`、`customJs`。`scheme` 只可能是 `auto`、`light`、`dark`。
+守护进程放进 boot 的字段包括 `version`、`platform`、`enabled`、`preset`、`scheme`、`fonts`、`cssText`、`customCss`、`themeVars`、`i18nDict`、`modules`、`features`（与 `modules` 同一对象）、`selectors`、`config`、`customJs`。`scheme` 只可能是 `auto`、`light`、`dark`。`fonts` 是 `{ ui, code }`，非法或缺省 id 在进 boot 前已换成默认值。`config.fonts` 与 `fonts` 相同。
 
 页面里模块默认值写在 `runtime.js` 的 `Object.assign`：
 
-- `i18n`
+- `i18n`：缺省 `false`。已安装配置里的布尔值覆盖这个缺省。
 - `metrics`
 - `composerWaxSeal`
 - `deadlockHealer`
@@ -42,7 +42,7 @@ Artifact / HTML 预览之类的子 iframe 不注入。唯一例外是本机 Agen
 - `metricsCapsule` 只有在没写 `metrics` 时才当作 `metrics`。
 - 运行时再把 `MODULES.metricsCapsule` 设成 `MODULES.metrics`，旧调用点还能读到。
 
-关整个补丁是 `enabled: false`，不是把每个模块都关掉。那条路径会删掉 `#ag-custom-fonts`、`#antigravity-user-custom-style`、`#ag-live-metrics-pill`、`#ag-live-metrics-tooltip`，断开 observer / interval，清掉 `data-ag-preset`、`data-ag-scheme`、`data-ag-page-type`、`data-ag-wax-seal`，并用 WeakMap 把译文还原。
+关整个补丁是 `enabled: false`，不是把每个模块都关掉。那条路径会删掉 `#ag-custom-fonts`、`#antigravity-user-custom-style`、`#ag-live-metrics-pill`、`#ag-live-metrics-tooltip`，断开 observer / interval，清掉 `data-ag-preset`、`data-ag-scheme`、`data-ag-page-type`、`data-ag-wax-seal`、`data-ag-font-ui`、`data-ag-font-code`，并用 WeakMap 把译文还原。
 
 ## 页面上的状态
 

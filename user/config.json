@@ -3,9 +3,13 @@
   "channel": "auto",
   "preset": "high-contrast",
   "scheme": "auto",
+  "fonts": {
+    "ui": "wenyuan-serif",
+    "code": "maple-bright"
+  },
   "contextLimit": 256000,
   "modules": {
-    "i18n": true,
+    "i18n": false,
     "metrics": true,
     "composerWaxSeal": true,
     "deadlockHealer": true,
