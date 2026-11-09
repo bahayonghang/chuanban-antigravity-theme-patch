@@ -52,3 +52,35 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: Agents 整窗跟随明暗类名
+<!-- trellis-session: v=2 fp=9a5dd7862bec6ac9 -->
+
+**Date**: 2026-11-08
+**Task**: Agents 整窗跟随明暗类名
+**Branch**: `dev`
+
+### Summary
+
+Agents 整窗在 theme class 变化后重跑 scheme 判定，不再把亮色墨盖在原生暗底上。
+
+### Main Changes
+
+- runtime 增加 class observer，配置 light/dark 仍优先
+- SKILL 与注入规范写明 Agents 不必为此重载
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4d932c63bc885aab89c9d81ee22748e95747a54a` | fix(theme): 🐛 Agents 整窗在类名变化后重判 scheme |
+| `73fe370724add718cb1c8304ab65d9bc28e439f7` | docs(spec): 📝 记录 scheme 必须在类名变化后重判 |
+
+### Testing
+
+- [OK] 2142 重载后 scheme=dark，壳 rgb(28, 25, 23)；scheme=light 强制仍生效并已恢复 auto
+
+### Status
+
+[OK] **Completed**
