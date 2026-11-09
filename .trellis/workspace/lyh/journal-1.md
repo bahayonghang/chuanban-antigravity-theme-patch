@@ -84,3 +84,25 @@ Agents 整窗在 theme class 变化后重跑 scheme 判定，不再把亮色墨�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: 字体目录与英文默认
+<!-- trellis-session: v=2 fp=1f3b172679893ec7 -->
+
+**Date**: 2026-11-09
+**Task**: 字体目录与英文默认
+**Branch**: `dev`
+
+### Summary
+
+字体目录已提交。外观默认 WenYuan Serif SC，代码默认 MapleBright，i18n 缺省 false。doctor 通过。CDP 2142/9222 拒绝连接，任务不归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `22e7c4c` | feat(theme): ✨ 字体目录可切换且界面默认英文 |
+
+### Status
+
+[OK] **Completed**
