@@ -128,3 +128,25 @@ Agents 整窗在 theme class 变化后重跑 scheme 判定，不再把亮色墨�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: 停止注入 IDE 并恢复插件
+<!-- trellis-session: v=2 fp=1c07b1551596c158 -->
+
+**Date**: 2026-11-09
+**Task**: 停止注入 IDE 并恢复插件
+**Branch**: `dev`
+
+### Summary
+
+停掉对 Antigravity IDE 工作台的注入和 argv 修补。12 个已登记插件按原版本装回扩展目录。规范写明缺 package.json 才会全部 Invalid。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f38318d` | fix(theme): 🐛 停止注入 Antigravity IDE 工作台 |
+
+### Status
+
+[OK] **Completed**

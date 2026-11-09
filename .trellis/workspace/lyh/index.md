@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-11-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~130 | Active |
+| `journal-1.md` | ~152 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-11-09 | 停止注入 IDE 并恢复插件 | `f38318d` | `dev` |
 | 5 | 2026-11-09 | 归档字体目录任务 | `22e7c4c` | `dev` |
 | 4 | 2026-11-09 | 字体目录与英文默认 | `22e7c4c` | `dev` |
 | 3 | 2026-11-08 | Agents 整窗跟随明暗类名 | `4d932c63bc885aab89c9d81ee22748e95747a54a`, `73fe370724add718cb1c8304ab65d9bc28e439f7` | `dev` |
