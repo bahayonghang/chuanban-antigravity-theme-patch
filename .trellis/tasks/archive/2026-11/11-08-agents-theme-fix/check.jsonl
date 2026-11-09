@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/inject/runtime.md", "reason": "核对新句柄会断开，汉化 observer 的属性过滤没被改掉"}
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "核对判定顺序和暗色表面令牌没有被改写"}
+{"file": ".trellis/spec/inject/quality.md", "reason": "核对 manifest、iframe 门禁，以及没有把临时 DOM 修改当成修复"}
+{"file": ".trellis/tasks/11-08-agents-theme-fix/research/agents-scheme-stale.md", "reason": "用实机故障样式对照验收，避免修错表面"}
