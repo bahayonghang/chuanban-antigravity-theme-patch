@@ -106,3 +106,25 @@ Agents 整窗在 theme class 变化后重跑 scheme 判定，不再把亮色墨�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 归档字体目录任务
+<!-- trellis-session: v=2 fp=e00900931612a260 -->
+
+**Date**: 2026-11-09
+**Task**: 归档字体目录任务
+**Branch**: `dev`
+
+### Summary
+
+用户确认界面效果可以，已归档 11-09-font-choices-en。实机截图为英文界面。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `22e7c4c` | feat(theme): ✨ 字体目录可切换且界面默认英文 |
+
+### Status
+
+[OK] **Completed**
