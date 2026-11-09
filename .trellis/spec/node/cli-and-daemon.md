@@ -48,7 +48,7 @@ import fs from 'node:fs';
 
 PID 锁文件是 `os.tmpdir()` 下的 `ag-theme-daemon-${pidKey}.pid`。`--once` 不加锁。已有活进程先 `SIGTERM`。清理只删「内容仍是自己 pid」的文件。
 
-通道默认 `auto`：一个进程同时看 Stable 与 Insiders。`~/.antigravity-ide`、IDE 端口文件或 `~/.gemini/antigravity-ide/conversations` 已存在时，再附加 IDE 端点，不替换前两个。`user/config.json` 里的 `portFile`、`conversationsDir`、`fallbackPort` 在 `auto` 下不能把另一套挤掉；只有命令行 `--port-file` 才锁定单一端口。锁定通道只通过已有的 `--channel stable|insiders`，这两个通道不探测 IDE。不要再写一个只盯单一通道的守护进程。
+通道默认 `auto`：一个进程只看 Stable 与 Insiders。目录 `~/.antigravity-ide` 存在也不附加 IDE 端点，不写 `~/.antigravity-ide/argv.json`，不连 `%APPDATA%/Antigravity IDE/DevToolsActivePort`。`user/config.json` 里的 `portFile`、`conversationsDir`、`fallbackPort` 在 `auto` 下不能把另一套挤掉；只有命令行 `--port-file` 才锁定单一端口。锁定通道只通过已有的 `--channel stable|insiders`。不要再写一个只盯单一通道的守护进程，也不要为了打进 IDE 工作台去连 IDE 端口。
 
 ## CDP 与会话指标
 
@@ -58,15 +58,15 @@ PID 锁文件是 `os.tmpdir()` 下的 `ag-theme-daemon-${pidKey}.pid`。`--once`
 - 打开会话库必须 `{ readOnly: true }`。这个补丁不写会话库。
 - 指标缓存是进程内 `Map`，上限 `MAX_METRICS_CACHE_SIZE = 30`。不要把指标落到仓库或 `user/`。
 
-## Scenario: 两个客户端同时注入
+## Scenario: 经典版双通道，不注入 IDE
 
 ### 1. Scope / Trigger
 
-本机可以同时跑经典版 `Antigravity.exe` 和 `Antigravity IDE.exe`。只打中其中一个，另一个会停在原生主题。
+本机可以同时跑经典版 `Antigravity.exe` 和 `Antigravity IDE.exe`。补丁只注入经典版。IDE 工作台停在原生主题是预期，不要为了「两个都打中」去连 IDE 端口。
 
 ### 2. Signatures
 
-- `resolveActiveChannelEndpoints(channelMode, userCfg)` 在 `auto` 下返回经典 Stable、Insiders（目录存在时才有响应）和 IDE 端点。
+- `resolveActiveChannelEndpoints(channelMode, userCfg)` 在 `auto` 下只返回经典 Stable 与 Insiders。
 - 命令行 `getArg('--port-file')` 非空时只返回一个端点。
 - `node install.mjs install --scheme auto|light|dark` 只在值精确匹配时写入配置。
 
@@ -75,38 +75,42 @@ PID 锁文件是 `os.tmpdir()` 下的 `ag-theme-daemon-${pidKey}.pid`。`--once`
 | 端点 | 端口文件 | 会话目录 |
 | --- | --- | --- |
 | stable | `%APPDATA%/Antigravity/DevToolsActivePort` | `~/.gemini/antigravity/conversations` |
-| ide | `%APPDATA%/Antigravity IDE/DevToolsActivePort` | `~/.gemini/antigravity-ide/conversations` |
+| insiders | `%APPDATA%/Antigravity - Insiders/DevToolsActivePort` | `~/.gemini/antigravity-insiders/conversations` |
 
-`user/config.json` 的 `portFile`、`conversationsDir`、`fallbackPort` 不参与 `auto` 的端点列表。IDE 的 argv 在 `~/.antigravity-ide/argv.json`。Antigravity IDE 1.107.0 只写这个字段不会打开 9222，必须完全退出后用 `--remote-debugging-port=9222` 启动。
+`user/config.json` 的 `portFile`、`conversationsDir`、`fallbackPort` 不参与 `auto` 的端点列表。不要写 `~/.antigravity-ide/argv.json`。不要把 `%APPDATA%/Antigravity IDE/DevToolsActivePort` 加入 `verify` 候选或守护进程端点。
+
+注入目标仍是经典版的 `page`，以及本机 Agent 面板 iframe。IDE 工作台也是 `page`；隔离方式是不连 IDE 端口，不是拒绝所有 `page`。
 
 Agent 面板是本机 `http:`/`https:` iframe，查询串有 `extensionView=true` 或 `hostTheme`。端口不固定，来源白名单用 `http://127.0.0.1` 前缀，不要写成 `http://127.0.0.1:9501`。
 
+插件全部显示 `Invalid Extensions detected` 时，先看 `~/.antigravity-ide/extensions/<id>/package.json` 是否存在。缺失是目录被删，不是 CSS。不要删除或重写 IDE 扩展目录，不要修改 IDE 安装目录。恢复一次已知删除是任务 `11-09-revert-ide-injection` 的例外，不是新的常规入口。
+
 ### 4. Validation & Error Matrix
 
-- 配置 `portFile` 指向 IDE，经典版仍在跑 → `auto` 仍附加经典版端口，不报错。
+- 配置 `portFile` 指向 IDE，经典版仍在跑 → `auto` 仍只附加经典版端口，不报错，也不去连 IDE 端口。
 - `--port-file` 指向不存在的文件 → 该轮 `/json/list` 失败，继续，不退出。
 - `--scheme` 不是 `auto|light|dark` → 不写入，安装不失败。
-- 9222 没有监听 → `verify` 的 `ok` 可以因别的窗口而为 true，但 IDE 面板未注入；不要把这写成代码失败。
+- 经典版没在听端口 → `verify` 连不上是环境缺口，不要改判定去连 IDE 端口。
 
 ### 5. Good/Base/Bad Cases
 
-- Good：经典版整窗和 IDE 侧栏同时带 `data-ag-scheme`。
-- Base：只有其中一个进程在听端口，另一个端点空转。
-- Bad：`allowedOrigins` 只剩某一个端口，动态面板被拒。
+- Good：经典版整窗带 `data-ag-scheme`。IDE 工作台保持原生。
+- Base：只有其中一个经典通道在听端口，另一个端点空转。
+- Bad：为了让 IDE 侧栏也带主题而去连 `%APPDATA%/Antigravity IDE/DevToolsActivePort`，或把 `allowedOrigins` 收成某一个端口。
 
 ### 6. Tests Required
 
-仓库没有单测。`node --check core/daemon.mjs` 后，对每个在听的端口看 `/json/list`：经典版 `page` 和 IDE Agent iframe 都应出现在守护进程的 `Attached target` 日志里。
+仓库没有单测。`node --check core/daemon.mjs` 后，对经典版在听的端口看 `/json/list`：经典版 `page` 和 Agent iframe 应出现在守护进程的 `Attached target` 日志里。不要把 IDE 端口加进验收。
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
-`auto` 看到配置里的 `portFile` 就只探测那一个文件。
+`auto` 看到 `~/.antigravity-ide` 就附加 IDE 端点，或看到配置里的 `portFile` 就只探测那一个文件。
 
 #### Correct
 
-`auto` 忽略配置里的单目标字段，经典版和 IDE 各走各的默认路径。只有命令行 `--port-file` 收成一个端点。
+`auto` 忽略配置里的单目标字段，只走 Stable 与 Insiders 的默认路径。只有命令行 `--port-file` 收成一个端点。
 
 ## 反模式
 
@@ -115,6 +119,8 @@ Agent 面板是本机 `http:`/`https:` iframe，查询串有 `extensionView=true
 - SQLite 导入失败时 `process.exit`，或对会话库使用默认可写连接。
 - 用非 UUID 的标题、路径当 `cascadeId` 去拼 `${id}.db`。
 - 为了热重载去重启 Antigravity 或守护进程。`user/` 保存后下一轮 2.5 秒 `sync` 会重建载荷。
+- 为了注入 IDE 工作台去连 `%APPDATA%/Antigravity IDE/DevToolsActivePort`，或给 `~/.antigravity-ide/argv.json` 写入调试端口。
+- 插件全部 Invalid 时去改 CSS，或删除、重写 `~/.antigravity-ide/extensions` 与 IDE 安装目录。
 
 ## 参考
 

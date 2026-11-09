@@ -24,12 +24,17 @@
 
 ## 禁止
 
-- 修改 Antigravity 安装目录、重签或解包 `.asar`。
-- 现场重写、拆分或「重新生成」`core/daemon.mjs` 来完成安装。调用现成的 `node install.mjs`。
+- 修改 Antigravity 安装目录、重签或解包 `.asar`。IDE 安装目录同样不许改。
+- 探测 Antigravity IDE，连接 `%APPDATA%/Antigravity IDE/DevToolsActivePort`，或给 `~/.antigravity-ide/argv.json` 写入 `remote-debugging-port`。`channel=auto` 只探测 Stable 与 Insiders。目录 `~/.antigravity-ide` 存在也不附加 IDE 端点。
+- 删除、覆盖或「清理」`~/.antigravity-ide/extensions`，也不要手填扩展目录里的 `extensions.json`。恢复一次已知删除是任务 `11-09-revert-ide-injection` 的例外，不是新的常规入口。
 - 把调试端口绑到非回环地址。CDP 的 HTTP 主机是字面量 `127.0.0.1`（`fetchTargets` / `fetchTargetsFromPort`）。
 - 来源白名单只允许现在这五项：`http://127.0.0.1`、`https://127.0.0.1`、`http://localhost`、`https://localhost`、`vscode-file://`。定义在 `install.mjs` 的 `ALLOWED_ORIGINS`，守护进程默认同一组，可被已安装 `user/config.json` 的 `allowedOrigins` 替换，但代理不要为了「方便调试」改宽。
 - 把本机 `~/.gemini/...` 的私人配置提交进仓库。字体文件也不入库。
 - 杀毒软件拦截 VBS 时，用任务计划程序注册 `node.exe`（`SKILL.md` 第六节）。不要另写一套守护脚本。
+
+## IDE 插件全部 Invalid
+
+Antigravity IDE 把已登记插件全部标成 `Invalid Extensions detected` 时，先看 `~/.antigravity-ide/extensions/<id>/package.json` 是否存在。缺失是目录被删，不是 CSS，也不是注入脚本的问题。不要为此改 `core/theme.css` 或 `core/runtime.js`，不要删除或重写扩展目录，不要修改 IDE 安装目录。
 
 ## 内核改动的入口
 

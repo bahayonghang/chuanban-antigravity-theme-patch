@@ -179,30 +179,6 @@ async function detectEnvironment(channel = 'auto') {
     };
   };
 
-  const ideChannelInfo = () => {
-    const appDirName = 'Antigravity IDE';
-    let portFile;
-    if (process.platform === 'darwin') {
-      portFile = path.join(home, 'Library/Application Support', appDirName, 'DevToolsActivePort');
-    } else if (process.platform === 'win32') {
-      const appData = process.env.APPDATA || path.join(home, 'AppData/Roaming');
-      portFile = path.join(appData, appDirName, 'DevToolsActivePort');
-    } else {
-      const xdg = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
-      portFile = path.join(xdg, appDirName, 'DevToolsActivePort');
-    }
-    const argvDir = path.join(home, '.antigravity-ide');
-    const conversationsDir = path.join(home, '.gemini', 'antigravity-ide', 'conversations');
-    if (!fs.existsSync(argvDir) && !fs.existsSync(portFile) && !fs.existsSync(conversationsDir)) return null;
-    return {
-      channel: 'ide',
-      appExists: fs.existsSync(argvDir),
-      portFile,
-      portFileExists: fs.existsSync(portFile),
-      conversationsDir
-    };
-  };
-
   const primaryChannel = channel === 'insiders' ? 'insiders' : 'stable';
   const chInfo = checkSingleChannel(primaryChannel);
   const insidersInfo = checkSingleChannel('insiders');
@@ -210,11 +186,6 @@ async function detectEnvironment(channel = 'auto') {
     stable: checkSingleChannel('stable'),
     insiders: insidersInfo
   };
-  if (channel !== 'stable' && channel !== 'insiders') {
-    const ideInfo = ideChannelInfo();
-    if (ideInfo) channels.ide = ideInfo;
-  }
-  const idePortFile = channels.ide?.portFileExists ? channels.ide.portFile : '';
 
   return {
     nodeVer,
@@ -230,25 +201,26 @@ async function detectEnvironment(channel = 'auto') {
     hasAnthropicFont,
     hasSarasaFont,
     channel,
-    appExists: chInfo.appExists || insidersInfo.appExists || Boolean(channels.ide?.appExists),
+    appExists: chInfo.appExists || insidersInfo.appExists,
     portFile: chInfo.portFileExists
       ? chInfo.portFile
       : insidersInfo.portFileExists
         ? insidersInfo.portFile
-        : idePortFile || chInfo.portFile,
-    portFileExists: chInfo.portFileExists || insidersInfo.portFileExists || Boolean(idePortFile),
+        : chInfo.portFile,
+    portFileExists: chInfo.portFileExists || insidersInfo.portFileExists,
     channels
   };
 }
 
 function ensureArgvRemoteDebugging(channel = 'auto') {
   const home = os.homedir();
+  // 只修补经典版。不要探测 Antigravity IDE，不要写入 ~/.antigravity-ide/argv.json。
   const dirs =
     channel === 'insiders'
       ? ['.antigravity-insiders']
       : channel === 'stable'
       ? ['.antigravity']
-      : ['.antigravity', '.antigravity-insiders', '.antigravity-ide'];
+      : ['.antigravity', '.antigravity-insiders'];
 
   const results = [];
   for (const d of dirs) {
@@ -336,7 +308,6 @@ async function inspectLiveWindow(portFileOrEnv, fallbackPort = 9222) {
     if (portFileOrEnv.portFile) candidateFiles.push(portFileOrEnv.portFile);
     if (portFileOrEnv.channels.stable?.portFile) candidateFiles.push(portFileOrEnv.channels.stable.portFile);
     if (portFileOrEnv.channels.insiders?.portFile) candidateFiles.push(portFileOrEnv.channels.insiders.portFile);
-    if (portFileOrEnv.channels.ide?.portFile) candidateFiles.push(portFileOrEnv.channels.ide.portFile);
     candidatePorts.push(9222, 9223);
   } else if (typeof portFileOrEnv === 'string' && portFileOrEnv) {
     candidateFiles.push(portFileOrEnv);

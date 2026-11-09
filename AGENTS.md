@@ -51,13 +51,13 @@ node install.mjs uninstall
 node install.mjs build-manifest
 ```
 
-可选参数以 `install.mjs` 文件头为准：`install` / `doctor` / `verify` 接受 `--channel auto|stable|insiders`；`install` 另接受 `--preset` 与 `--target-dir`。默认 `channel=auto`，一个守护进程同时照看 Stable 和 Insiders。
+可选参数以 `install.mjs` 文件头为准：`install` / `doctor` / `verify` 接受 `--channel auto|stable|insiders`；`install` 另接受 `--preset` 与 `--target-dir`。默认 `channel=auto`，一个守护进程同时照看 Stable 和 Insiders，不探测 Antigravity IDE。
 
 部署顺序：`doctor` →（缺字体时先 `install-fonts` 或让用户自行安装）→ `install` → 确认 Antigravity 在运行 → `verify`。字体不在本仓库，从 `core/manifest.json` 的 `distribution.googleDriveFullBundle` 获取。`install-fonts` 在 Windows 上除了复制到 `%LOCALAPPDATA%\Microsoft\Windows\Fonts`，还会写当前用户字体注册表；不要只 `copy` 字体文件。
 
 验收看 `verify` 的 JSON：`"ok": true`，且 `themeStyle` 为 true、版本与当前包一致。异常时先 `doctor`，再用 `verify --safe-mode` 判断是不是 `user/` 层造成的；需要回到上一份内核快照时用 `rollback`。`uninstall` 只停服务，保留已安装的 `user/`。
 
-首次 `install` 会给 `~/.antigravity/argv.json`（以及 Insiders 对应文件）写入 `"remote-debugging-port": 9222`。若客户端当时已经开着，要请用户完全退出再打开一次，否则 `verify` 连不上。
+首次 `install` 会给 `~/.antigravity/argv.json`（以及 Insiders 对应文件）写入 `"remote-debugging-port": 9222`。不要写 `~/.antigravity-ide/argv.json`。若客户端当时已经开着，要请用户完全退出再打开一次，否则 `verify` 连不上。
 
 改过 `core/daemon.mjs`、`core/runtime.js`、`core/theme.css` 或 `core/i18n.json` 之后，运行 `node install.mjs build-manifest`，让 `core/manifest.json` 的 SHA-256 和字节数与文件一致。不要手改这些哈希。
 
@@ -82,7 +82,8 @@ node install.mjs build-manifest
 禁止：
 
 - 现场重写、拆分或「重新生成」`core/` 守护进程、注入引擎、样式或词典来完成安装。
-- 修改 Antigravity 安装目录、重签或解包 `.asar`。
+- 修改 Antigravity 或 Antigravity IDE 的安装目录、重签或解包 `.asar`。探测 IDE、连接 `%APPDATA%/Antigravity IDE/DevToolsActivePort`，或给 `~/.antigravity-ide/argv.json` 写入 `remote-debugging-port`。
+- 删除、覆盖或「清理」`~/.antigravity-ide/extensions`。插件全部显示 `Invalid Extensions detected` 时，先看 `~/.antigravity-ide/extensions/<id>/package.json` 是否存在；缺失是目录被删，不是 CSS。不要改写扩展目录来「修」这个横幅。
 - 把调试端口绑到非回环地址。CDP 来源只允许 `install.mjs` 里的 `127.0.0.1`、`localhost` 和 `vscode-file://`。
 - 升级或重装时覆盖用户已有的 `user/`。同一版本重复安装也不要冲掉上一份 `core.prev/` 快照。
 - 把本机 `~/.gemini/...` 的私人配置提交进仓库。字体文件也不入库。
