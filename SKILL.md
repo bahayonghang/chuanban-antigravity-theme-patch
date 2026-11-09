@@ -132,7 +132,7 @@ node install.mjs verify
 }
 ```
 - **`preset`**：支持 `"high-contrast"`（默认高对比暖白）、`"claude-desktop-purewhite"`（ClaudeDesktop 净白）、`"vintage-deep"`（复古深色羊皮纸），修改保存后 2.5 秒内自动热切换。三套都是亮色，不要把 `vintage-deep` 改成暗色。
-- **`scheme`**：只允许 `"auto"`、`"light"`、`"dark"`。`auto` 跟随 Agent 面板 URL 的 `hostTheme`，没有这个参数时再看 `theme-dark` / `theme-light` 和 `localStorage` 的 `theme-mode`，最后回退亮色。`light` 或 `dark` 强制该模式，约 2.5 秒热切换。切换 IDE 主题后，若面板 URL 里的 `hostTheme` 没变，重载 Agent 面板即可；不要为此另写消息通道。`auto` 还会在目录存在时探测 Antigravity IDE：`~/.antigravity-ide/argv.json`、`%APPDATA%/Antigravity IDE/DevToolsActivePort`、`~/.gemini/antigravity-ide/conversations`。`stable` 与 `insiders` 不改道。
+- **`scheme`**：只允许 `"auto"`、`"light"`、`"dark"`。`auto` 跟随 Agent 面板 URL 的 `hostTheme`，没有这个参数时再看 `theme-dark` / `theme-light` 和 `localStorage` 的 `theme-mode`，最后回退亮色。`light` 或 `dark` 强制该模式，约 2.5 秒热切换。Agents 整窗跟随 `theme-dark` / `theme-light` 类变化，不必为此重载窗口。切换 IDE 主题后，若面板 URL 里的 `hostTheme` 没变，重载 Agent 面板即可；不要为此另写消息通道。`auto` 还会在目录存在时探测 Antigravity IDE：`~/.antigravity-ide/argv.json`、`%APPDATA%/Antigravity IDE/DevToolsActivePort`、`~/.gemini/antigravity-ide/conversations`。`stable` 与 `insiders` 不改道。
 - **`modules`（亦兼容别名 `features`，其中 `metrics` 兼容别名 `metricsCapsule`）**：支持单独开关任意子模块；若将顶层 `"enabled": false` 保存，页面将在 2.5 秒内无损卸载全部样式并将已汉化的界面文字还原为英文原貌。
 - **`themeVars`**：任何 CSS 变量键值都会自动挂载到 `document.documentElement`（`<html>` 根节点），删除键时自动清理。
 

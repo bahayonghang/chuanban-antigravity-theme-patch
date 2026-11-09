@@ -120,6 +120,22 @@
     window.__ag_applied_theme_vars = nextKeys;
   }
 
+  // 类名变化要重判 scheme。再次注入和卸载都先断开，避免叠 observer。
+  function disconnectSchemeObservers() {
+    if (window.__ag_scheme_observer) {
+      try {
+        window.__ag_scheme_observer.disconnect();
+      } catch (e) {}
+      window.__ag_scheme_observer = null;
+    }
+    if (window.__ag_scheme_body_wait) {
+      try {
+        window.__ag_scheme_body_wait.disconnect();
+      } catch (e) {}
+      window.__ag_scheme_body_wait = null;
+    }
+  }
+
   // 若用户在 user/config.json 中将 enabled 设为 false，执行无损卸载还原
   if (!ENABLED) {
     const s1 = document.getElementById('ag-custom-fonts');
@@ -143,6 +159,7 @@
       window.__ag_metrics_route_watcher = null;
     }
     applyThemeVars({});
+    disconnectSchemeObservers();
     document.documentElement.removeAttribute('data-ag-preset');
     document.documentElement.removeAttribute('data-ag-scheme');
     document.documentElement.removeAttribute('data-ag-page-type');
@@ -336,6 +353,44 @@
     } catch (e) {}
   }
 
+  function installSchemeObserver() {
+    disconnectSchemeObservers();
+    const root = document.documentElement;
+    if (!root || typeof MutationObserver !== 'function') return;
+    const obs = new MutationObserver(() => {
+      syncChuanbanScheme();
+    });
+    window.__ag_scheme_observer = obs;
+    try {
+      obs.observe(root, { attributes: true, attributeFilter: ['class'] });
+    } catch (e) {}
+    if (document.body) {
+      try {
+        obs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+      } catch (e) {}
+      return;
+    }
+    const wait = new MutationObserver(() => {
+      if (!document.body) return;
+      try {
+        wait.disconnect();
+      } catch (e) {}
+      if (window.__ag_scheme_body_wait !== wait) return;
+      window.__ag_scheme_body_wait = null;
+      try {
+        obs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+      } catch (e) {}
+      syncChuanbanScheme();
+    });
+    window.__ag_scheme_body_wait = wait;
+    try {
+      wait.observe(root, { childList: true });
+    } catch (e) {
+      window.__ag_scheme_body_wait = null;
+    }
+  }
+
+
   window.__ag_sync_preset_fn = syncChuanbanPreset;
 
   if (!window.__ag_preset_hook_installed) {
@@ -366,6 +421,7 @@
   }
 
   syncChuanbanPreset();
+  installSchemeObserver();
   window.__ag_patch_version = PATCH_VERSION;
 
   // ============================================================================
