@@ -61,6 +61,8 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 
 判定顺序：配置里的 `light`/`dark`；当前 URL 的 `hostTheme`；`theme-dark` / `theme-light` 类；`localStorage['theme-mode']` 恰好为 `dark` 或 `light`；否则 `light`。
 
+这个顺序在注入时跑一次不够。`documentElement` 或 `body` 的 `class` 后来才出现、或之后被改掉时，必须用同一函数再判一次。Agents 整窗不写 `theme-mode`，也不需要为这次同步重载。IDE 面板若 URL 里的 `hostTheme` 没变，仍要重载面板。不要把 `color-scheme` 或单独的 `dark` 类加进顺序。
+
 暗色表面令牌：页面 `#1C1917`，侧栏 `#24201C`，输入框外层 `#2A231E`，内卡 `#1F1B18`，正文 `#F4EFE6`，侧栏字 `#E7E0D6`，蜡封 `#C46A58`。发送按钮保持 `#D97757` / `#FFFFFF`。
 
 经典版整窗的可见底色在 `.agy-shell`、`.agy-sheet`、`.bg-background`、`.bg-sidebar` 上，不在 `body`。`.agy-sheet` 还有一层冷蓝径向渐变，暗色时要换成暖色，否则主区仍像原生主题。
@@ -70,12 +72,14 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 - 预设规则带 `!important`，暗色变量不带 → 暗色不生效。
 - 暗色选择器压不过 `html[data-ag-preset] body.theme-light` → `body` 仍是亮色变量。
 - `:root` 上写死 `--ag-wax-seal-hover: #74221A` → 暗色蜡封回退永远用不到 `#C46A58`。亮色默认只放在 `html:not([data-ag-scheme="dark"])`。
+- 只在注入时写 `data-ag-scheme`，类名后到不再判 → Agents 暗色窗口停在亮色墨，深底深字。
 
 ### 5. Good/Base/Bad Cases
 
 - Good：IDE 为暗色时面板底色 `rgb(28, 25, 23)`；配置 `scheme=light` 后同一暗色 URL 变成 `rgb(252, 252, 251)`。
 - Base：没有 `hostTheme` 也没有主题类，结果是 `light`。
 - Bad：把 `vintage-deep` 的 `#FBF9F5` 改成暗色。
+- Bad：Agents 已有 `body.theme-dark`，但因为没有 `theme-mode` 写入就保持 `data-ag-scheme="light"`。
 
 ### 6. Tests Required
 

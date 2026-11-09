@@ -56,6 +56,8 @@ Artifact / HTML 预览之类的子 iframe 不注入。唯一例外是本机 Agen
 | `window.__ag_metrics_route_watcher` | 指标路由 `setInterval`，重建前先 `clearInterval` |
 | `window.__ag_last_metrics` | 最近一次指标 |
 | `window.__AG_PATCH_CTX__` | 交给 `custom.js` 的 `ctx` / `boot` |
+| `window.__ag_scheme_observer` | 监听 `documentElement` 与 `body` 的 `class`，变化时只调用 `syncChuanbanScheme`。重建前先 `disconnect` |
+| `window.__ag_scheme_body_wait` | `body` 尚未出现时的一次性 `childList` 等待。出现后必须 `disconnect` 并清空，不能留成第二个长期 observer |
 
 新的长期句柄沿用 `__ag_` 前缀，并在重新注入时先清掉旧的 observer / timer。漏清就会叠多个 observer。
 
@@ -66,6 +68,8 @@ Artifact / HTML 预览之类的子 iframe 不注入。唯一例外是本机 Agen
 现有熔断是单帧约 200 个节点，加上 `requestAnimationFrame` 与 80ms `setTimeout` 双触发，避免后台标签里脏根无限堆积。新扫描逻辑沿这个预算，不要对整棵 `document.body` 做无节流的全量 walk。
 
 主题变量经 `applyThemeVars` 写到 `document.documentElement.style`。空字符串会删掉该属性。`--ag-chat-font-size` 还会切换 `data-ag-custom-font-size`。
+
+`scheme=auto` 不能只在注入时和 `localStorage.setItem` 时判定。Agents 整窗改的是 `body` 的 `theme-dark` / `theme-light`，不写 `theme-mode`。`Page.addScriptToEvaluateOnNewDocument` 可能早于类名。用独立的 `window.__ag_scheme_observer` 看 `documentElement` 和 `body` 的 `class`，回调只调用 `syncChuanbanScheme()`。`body` 还不在时，用可断开的一次性 `childList` 等到它出现，再观察它的 `class` 并立刻再同步一次。不要把汉化 observer 扩成监听 `class` 或 `style`。不要轮询。配置里的 `light` / `dark` 仍由 `resolveAgScheme()` 开头短路，observer 不能绕过。`enabled: false` 必须先断开这两个句柄，再删 `data-ag-scheme`。
 
 ## 用户脚本沙箱
 
@@ -86,6 +90,7 @@ fn(window.__AG_PATCH_CTX__, window.__AG_PATCH_CTX__);
 - 注入 Agent 面板以外的子 iframe，或在非顶层窗口改 `history`。
 - 用 `localStorage.theme-preset-light = ...` 直接赋值。现有代码走 `Storage.prototype.setItem/getItem.call`，并会把非法的 `theme-preset-light` 改回 `Default Light`，避免原生主题选择器白屏。
 - 热重载时不 `disconnect` 旧 observer 就 `new` 一个新的。
+- 只在注入时同步 `data-ag-scheme`，指望 `localStorage['theme-mode']`。Agents 不写这个键，类名后到就会停在 `light`，亮色墨盖在原生暗底上。
 
 ## 参考
 
