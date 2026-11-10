@@ -84,10 +84,20 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 蜡封三态是纯 CSS，不靠 JS 轮询：
 
 - 首页：`html:has([data-testid="home-greeting"])`，默认透明，悬停/聚焦才出淡蜡封。
-- 会话里：输入框常驻淡蜡封，悬停/聚焦用 `--ag-wax-seal-hover`（默认 `#74221A`）。
+- 会话里：输入框常驻淡蜡封，悬停/聚焦用 `--ag-wax-seal-hover`（默认亮色 high-contrast 为 `#C6613F`，其它亮色预设为 `#74221A`）。
 - 关蜡封是 `data-ag-wax-seal="off"`，对应模块 `composerWaxSeal: false`。
 
 改颜色优先加 CSS 变量，让 `user/config.json` 的 `themeVars` 能覆盖。变量写到 `documentElement`，删除键时运行时会 `removeProperty`。
+
+### 默认亮色表面
+
+`high-contrast` / `chuanban-warm-white` 的亮色纸面为 `#FAF9F5`，外壳、侧栏和输入框外层为 `#F0EEE6`，内卡为白色；弱化墨色为 `#65635D`，分隔线为暖墨 15%。规则必须同时限定预设和 `:not([data-ag-scheme="dark"])`，不能改共享 `:root` 或暗色块来实现亮色优化。
+
+实际外壳包括 `.agy-shell`、`.agy-inset-shell`、`.bg-sidebar`。`.agy-inset-shell` 会本地重定义 `--shell-canvas`，其下 `.contents` 通过行内 `--sidebar: var(--shell-canvas)` 转接；因此根节点令牌不够，需在外壳元素覆盖本地 `--shell-canvas`。验收要读所有 `.bg-sidebar`，不能只读标题栏的第一个匹配节点。
+
+原生 onyx 主题的 `.agy-sidebar-row[data-selected="true"]` 读取 `--onyx-selected`，不读 `--sidebar-secondary`。默认亮色应在选中行上用 `--onyx-selected: var(--sidebar-secondary)` 接回预设选中底色；只改 body 类名不能验证这条兼容路径。
+
+改动后对照新旧暗色三套预设、另外两套亮色及历史别名的计算样式；强制亮色时宿主 body 可能仍带 `.theme-dark`，基础变量也必须覆盖该组合。测聚焦边框颜色时先禁用该元素的 transition，避免把动画中的插值误认为规则失效；测后恢复行内样式和焦点。
 
 ## Scenario: scheme 与暗色表面
 
@@ -120,7 +130,7 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 
 ### 5. Good/Base/Bad Cases
 
-- Good：IDE 为暗色时面板底色 `rgb(28, 25, 23)`；配置 `scheme=light` 后同一暗色 URL 变成 `rgb(252, 252, 251)`。
+- Good：暗色面板底色 `rgb(28, 25, 23)`；默认 high-contrast 配置 `scheme=light` 后同一暗色宿主变成 `rgb(250, 249, 245)`。
 - Base：没有 `hostTheme` 也没有主题类，结果是 `light`。
 - Bad：把 `vintage-deep` 的 `#FBF9F5` 改成暗色。
 - Bad：Agents 已有 `body.theme-dark`，但因为没有 `theme-mode` 写入就保持 `data-ag-scheme="light"`。

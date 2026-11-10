@@ -218,6 +218,59 @@ html[data-ag-preset="chuanban-warm-white"] body, html[data-ag-preset="high-contr
   color: var(--foreground) !important;
 }
 
+/* 默认亮色用同一暖纸灰阶；限定 scheme，避免改变暗色及其它预设。 */
+html:not([data-ag-scheme="dark"]):is([data-ag-preset="high-contrast"], [data-ag-preset="chuanban-warm-white"]),
+html:not([data-ag-scheme="dark"]):is([data-ag-preset="high-contrast"], [data-ag-preset="chuanban-warm-white"]) body:is(.theme-light, .theme-dark) {
+  --background: #FAF9F5 !important;
+  --foreground: #3D3D3A !important;
+  --sidebar: #F0EEE6 !important;
+  --sidebar-secondary: #E3E0D5 !important;
+  --sidebar-muted: #E8E6DC !important;
+  --sidebar-border: rgba(31, 30, 29, 0.15) !important;
+  --border: rgba(31, 30, 29, 0.15) !important;
+  --vscode-sideBar-background: #F0EEE6 !important;
+  --shell-canvas: #F0EEE6 !important;
+  --card: #FFFFFF !important;
+  --card-border: rgba(31, 30, 29, 0.15) !important;
+  --card-edge: rgba(31, 30, 29, 0.15) !important;
+  --sash-line: rgba(31, 30, 29, 0.15) !important;
+  --secondary-foreground: #3D3D3A !important;
+  --muted-foreground: #65635D !important;
+}
+
+/* 改装令牌留在根节点且不加 important，继续允许 themeVars 行内覆盖。 */
+html:not([data-ag-scheme="dark"]):is([data-ag-preset="high-contrast"], [data-ag-preset="chuanban-warm-white"]) {
+  --ag-composer-bg: #F0EEE6;
+  --ag-composer-card-bg: #FFFFFF;
+  --ag-ink: #3D3D3A;
+  --ag-ink-strong: #141413;
+  --ag-ink-soft: #3D3D3A;
+  --ag-ink-muted: #65635D;
+  --ag-line: rgba(31, 30, 29, 0.15);
+  --ag-wax-seal-hover: #C6613F;
+  --ag-wax: var(--ag-wax-seal-hover, #C6613F);
+  --ag-wax-soft: rgba(198, 97, 63, 0.40);
+}
+
+/* 实际纸面和外壳各自铺底，覆盖原生灰底与冷色顶光。 */
+html:not([data-ag-scheme="dark"]):is([data-ag-preset="high-contrast"], [data-ag-preset="chuanban-warm-white"]) :is(.bg-background, .agy-sheet, [data-main-content-body], [data-side-panel-body]) {
+  background-color: var(--background) !important;
+}
+
+html:not([data-ag-scheme="dark"]):is([data-ag-preset="high-contrast"], [data-ag-preset="chuanban-warm-white"]) :is(.agy-shell, .agy-inset-shell, .bg-sidebar) {
+  --shell-canvas: #F0EEE6 !important;
+  background-color: var(--sidebar) !important;
+}
+
+html:not([data-ag-scheme="dark"]):is([data-ag-preset="high-contrast"], [data-ag-preset="chuanban-warm-white"]) .agy-sheet {
+  background-image: none !important;
+}
+
+/* 原生 onyx 选中行另读独立令牌，不能只改 sidebar-secondary。 */
+html:not([data-ag-scheme="dark"]):is([data-ag-preset="high-contrast"], [data-ag-preset="chuanban-warm-white"]) .agy-sidebar-row[data-selected="true"] {
+  --onyx-selected: var(--sidebar-secondary);
+}
+
 /* 暗色令牌。放在三套亮色预设之后，并用 body.theme-* 压过预设的同名组合。 */
 html[data-ag-scheme="dark"],
 html[data-ag-scheme="dark"] body.theme-light,

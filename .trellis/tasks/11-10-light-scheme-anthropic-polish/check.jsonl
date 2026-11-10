@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "预设、暗色隔离、用户覆盖和蜡封约定"}
+{"file": ".trellis/spec/inject/quality.md", "reason": "内核校验和实机验收"}
+{"file": ".trellis/tasks/11-10-light-scheme-anthropic-polish/research/claude-desktop-light-tokens.md", "reason": "官方参考与限定范围"}
+{"file": "DESIGN.md", "reason": "本轮设计令牌与不变量"}

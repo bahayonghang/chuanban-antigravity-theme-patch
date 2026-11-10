@@ -1,0 +1,249 @@
+{
+  "nodeCount": 51,
+  "properties": 30,
+  "pseudoStates": 3,
+  "cases": [
+    {
+      "bodyTheme": "light",
+      "scheme": "dark",
+      "preset": "high-contrast",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "dark",
+      "preset": "chuanban-warm-white",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "dark",
+      "preset": "claude-desktop-purewhite",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "dark",
+      "preset": "claude-desktop-official",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "dark",
+      "preset": "vintage-deep",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "dark",
+      "preset": "absoulutely-chuanban",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "light",
+      "preset": "high-contrast",
+      "targeted": true,
+      "differences": 3066
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "light",
+      "preset": "chuanban-warm-white",
+      "targeted": true,
+      "differences": 3066
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "light",
+      "preset": "claude-desktop-purewhite",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "light",
+      "preset": "claude-desktop-official",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "light",
+      "preset": "vintage-deep",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "light",
+      "scheme": "light",
+      "preset": "absoulutely-chuanban",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "dark",
+      "preset": "high-contrast",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "dark",
+      "preset": "chuanban-warm-white",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "dark",
+      "preset": "claude-desktop-purewhite",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "dark",
+      "preset": "claude-desktop-official",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "dark",
+      "preset": "vintage-deep",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "dark",
+      "preset": "absoulutely-chuanban",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "light",
+      "preset": "high-contrast",
+      "targeted": true,
+      "differences": 3066
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "light",
+      "preset": "chuanban-warm-white",
+      "targeted": true,
+      "differences": 3066
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "light",
+      "preset": "claude-desktop-purewhite",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "light",
+      "preset": "claude-desktop-official",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "light",
+      "preset": "vintage-deep",
+      "targeted": false,
+      "differences": 0
+    },
+    {
+      "bodyTheme": "dark",
+      "scheme": "light",
+      "preset": "absoulutely-chuanban",
+      "targeted": false,
+      "differences": 0
+    }
+  ],
+  "light": [
+    {
+      "bodyTheme": "light",
+      "preset": "high-contrast",
+      "body": "rgb(250, 249, 245)",
+      "shell": "rgb(240, 238, 230)",
+      "paper": "rgb(250, 249, 245)",
+      "composer": "rgb(240, 238, 230)",
+      "line": "rgba(31, 30, 29, 0.15)",
+      "wax": "#C6613F"
+    },
+    {
+      "bodyTheme": "light",
+      "preset": "chuanban-warm-white",
+      "body": "rgb(250, 249, 245)",
+      "shell": "rgb(240, 238, 230)",
+      "paper": "rgb(250, 249, 245)",
+      "composer": "rgb(240, 238, 230)",
+      "line": "rgba(31, 30, 29, 0.15)",
+      "wax": "#C6613F"
+    },
+    {
+      "bodyTheme": "dark",
+      "preset": "high-contrast",
+      "body": "rgb(250, 249, 245)",
+      "shell": "rgb(240, 238, 230)",
+      "paper": "rgb(250, 249, 245)",
+      "composer": "rgb(240, 238, 230)",
+      "line": "rgba(31, 30, 29, 0.15)",
+      "wax": "#C6613F"
+    },
+    {
+      "bodyTheme": "dark",
+      "preset": "chuanban-warm-white",
+      "body": "rgb(250, 249, 245)",
+      "shell": "rgb(240, 238, 230)",
+      "paper": "rgb(250, 249, 245)",
+      "composer": "rgb(240, 238, 230)",
+      "line": "rgba(31, 30, 29, 0.15)",
+      "wax": "#C6613F"
+    }
+  ],
+  "themeVars": "checked",
+  "states": [
+    {
+      "page": "home",
+      "before": {
+        "color": "rgba(0, 0, 0, 0)",
+        "width": "1.33333px",
+        "focused": false,
+        "hovered": false
+      },
+      "after": {
+        "color": "rgba(198, 97, 63, 0.4)",
+        "width": "1.33333px",
+        "focused": true
+      }
+    },
+    {
+      "page": "chat",
+      "before": {
+        "color": "rgba(198, 97, 63, 0.4)",
+        "width": "1.33333px",
+        "focused": false,
+        "hovered": false
+      },
+      "after": {
+        "color": "rgb(198, 97, 63)",
+        "width": "1.33333px",
+        "focused": true
+      }
+    }
+  ],
+  "failures": []
+}
