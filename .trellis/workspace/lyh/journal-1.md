@@ -150,3 +150,38 @@ Agents 整窗在 theme class 变化后重跑 scheme 判定，不再把亮色墨�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: 默认亮色暖纸层次优化完成
+<!-- trellis-session: v=2 fp=17660bb07ca1d1bf -->
+
+**Date**: 2026-11-10
+**Task**: 默认亮色暖纸层次优化完成
+**Branch**: `dev`
+
+### Summary
+
+优化并部署 high-contrast 亮色，保留暗色及其它预设；用户已确认提交和归档，交接 txt 已删除。
+
+### Main Changes
+
+- 修复实际外壳 shell-canvas 和 onyx 选中行变量，统一暖纸背景、分隔线与陶土蜡封；用户配置哈希未变。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7d6bdcd` | fix(theme): 优化默认亮色暖纸层次 |
+
+### Testing
+
+- [OK] 24 组真实 DOM 样式对照通过，20 组受保护组合零差异；聚焦状态、manifest、doctor、verify 和独立复核通过。
+- [OK] 亮色截图为临时 DOM/CSS 覆盖；未更改持久化主题，未导航验证原生首页。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 任务已归档，未推送；原有暗色方案文档删除未纳入本次提交。
