@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/node/index.md", "reason": "Node 层质量检查项与 build-manifest 校验要求"}
+{"file": ".trellis/spec/node/cli-and-daemon.md", "reason": "守护进程 SQLite 只读、降级与双通道契约核对"}
+{"file": ".trellis/spec/node/boundaries.md", "reason": "核对未触碰 IDE 且未覆盖已安装 user/"}
+{"file": ".trellis/spec/inject/index.md", "reason": "注入层质量检查项与卸载还原验证"}
+{"file": ".trellis/spec/inject/runtime.md", "reason": "核对 observer/listener 生命周期与 custom.js 兼容性"}
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "核对明暗三套预设与默认亮色无意外漂移"}
+{"file": "DESIGN.md", "reason": "design-atlas 令牌、对比度与 Anti-slop 豁免契约"}
+{"file": ".trellis/tasks/11-13-metrics-capsule-atlas-polish/research/context-window-and-protobuf.md", "reason": "核对 Gemini / Claude 真实会话库的动态阈值与压缩次数计算"}
+{"file": ".trellis/tasks/11-13-metrics-capsule-atlas-polish/research/design-atlas-capsule-audit.md", "reason": "核对八维诊断发现的所有缺陷均已闭环"}
