@@ -185,3 +185,27 @@ Agents 整窗在 theme class 变化后重跑 scheme 判定，不再把亮色墨�
 ### Next Steps
 
 - 任务已归档，未推送；原有暗色方案文档删除未纳入本次提交。
+
+
+## Session 8: 会话指标胶囊动态压缩水位校准、四阶矿物色重塑与中英双语自动跟随
+<!-- trellis-session: v=2 fp=5d70f131e6870c4a -->
+
+**Date**: 2026-11-13
+**Task**: 会话指标胶囊动态压缩水位校准、四阶矿物色重塑与中英双语自动跟随
+**Branch**: `dev`
+
+### Summary
+
+解析 SQLite gen_metadata 动态自动压缩上限(256k/840k/160k)与模型原生窗口(1M/200k)，过滤 ctx=0 模型切换快照；重构指标胶囊与顶部上下文焦点卡三级墨色及四阶矿物水位徽标(WCAG AA >= 4.86:1，slop_check 0 FAIL)；增加 payload.i18n.{en,zh} 与前端语言自动跟随及热重载实时切换。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6834d8d` | feat(metrics): 校准动态压缩水位解析并支持中英双语自动跟随 |
+| `f5e5241` | feat(theme): 重塑指标胶囊四阶矿物色与详情焦点卡层次 |
+| `7c13423` | docs(spec): 补充会话压缩水位遥测与胶囊双语规范 |
+
+### Status
+
+[OK] **Completed**
