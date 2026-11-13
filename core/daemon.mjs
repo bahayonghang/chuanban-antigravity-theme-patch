@@ -122,6 +122,10 @@ function normalizeScheme(value) {
   return value === 'light' || value === 'dark' || value === 'auto' ? value : 'auto';
 }
 
+function normalizeMetricsLang(value) {
+  return value === 'zh' || value === 'en' || value === 'auto' ? value : 'auto';
+}
+
 const UI_FONT_IDS = ['wenyuan-serif', 'wenyuan-sans', 'anthropic', 'system'];
 const CODE_FONT_IDS = ['maple-bright', 'maple-mono', 'anthropic', 'sarasa'];
 
@@ -236,8 +240,13 @@ function rebuildBundleIfNeeded() {
   const channel = CLI_CHANNEL || userCfg.channel || 'auto';
   const preset = userCfg.preset || 'high-contrast';
   const scheme = normalizeScheme(userCfg.scheme);
+  const metricsLang = normalizeMetricsLang(userCfg.metricsLang);
   const fonts = normalizeFonts(userCfg.fonts);
-  const contextLimit = Number(userCfg.contextLimit) > 0 ? Number(userCfg.contextLimit) : 256000;
+  const rawCfgLimit = Number(userCfg.contextLimit);
+  const rawLimitOverride = Number(userCfg.contextLimitOverride);
+  const contextLimit = rawCfgLimit > 0 ? rawCfgLimit : 256000;
+  const contextLimitOverride =
+    rawLimitOverride > 0 ? rawLimitOverride : rawCfgLimit > 0 && rawCfgLimit !== 256000 ? rawCfgLimit : 0;
 
   const rawModules = Object.assign({}, userCfg.features || {}, userCfg.modules || {});
   if (typeof rawModules.metricsCapsule === 'boolean' && typeof rawModules.metrics !== 'boolean') {
@@ -267,8 +276,10 @@ function rebuildBundleIfNeeded() {
     channel,
     preset,
     scheme,
+    metricsLang,
     fonts,
     contextLimit,
+    contextLimitOverride,
     modules,
     themeVars,
     selectors: userCfg.selectors || {},
@@ -297,7 +308,7 @@ function rebuildBundleIfNeeded() {
     .update(customCss)
     .update(JSON.stringify(mergedDict))
     .update(customJs)
-    .update(JSON.stringify({ preset, scheme, modules, themeVars, selectors: activeConfig.selectors, fonts }))
+    .update(JSON.stringify({ preset, scheme, metricsLang, modules, themeVars, selectors: activeConfig.selectors, fonts }))
     .digest('hex')
     .slice(0, 8);
 
@@ -310,6 +321,7 @@ function rebuildBundleIfNeeded() {
     enabled,
     preset,
     scheme,
+    metricsLang,
     fonts,
     cssText: baseCss,
     customCss,
@@ -323,6 +335,7 @@ function rebuildBundleIfNeeded() {
       channel,
       preset,
       scheme,
+      metricsLang,
       fonts,
       contextLimit,
       modules,
@@ -405,15 +418,19 @@ function parseProto(buf) {
     const wt = tag & 7;
     if (fn <= 0 || fn > 10000) break;
     if (wt === 0) {
-      let val = 0;
-      let s = 0;
+      let big = 0n;
+      let s = 0n;
       while (i < buf.length) {
         const b = buf[i++];
-        val += (b & 0x7f) * Math.pow(2, s);
+        big |= BigInt(b & 0x7f) << s;
         if (!(b & 0x80)) break;
-        s += 7;
+        s += 7n;
       }
-      out.set(fn, val);
+      big &= 0xffffffffffffffffn;
+      if (big > 0x7fffffffffffffffn) {
+        big -= 0x10000000000000000n;
+      }
+      out.set(fn, Number(big));
     } else if (wt === 2) {
       let len = 0;
       let s = 0;
@@ -449,8 +466,58 @@ function fmtTok(n) {
   return String(n);
 }
 
+function fmtLimitTok(n) {
+  if (!n || n <= 0) return '0';
+  if (n === 1048576 || n === 1000000) return '1M';
+  if (n >= 1000000) {
+    if (n % 1048576 === 0) return n / 1048576 + 'M';
+    const m = n / 1000000;
+    return (Number.isInteger(m) ? String(m) : m.toFixed(1).replace(/\.0$/, '')) + 'M';
+  }
+  if (n >= 1000) return Math.round(n / 1000) + 'k';
+  return String(n);
+}
+
 function fmtNum(n) {
   return (n || 0).toLocaleString('en-US');
+}
+
+function decodeUtf8Safe(buf) {
+  if (!buf || !buf.length) return '';
+  try {
+    return Buffer.from(buf).toString('utf8').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+  } catch {
+    return '';
+  }
+}
+
+function escHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function inferModelWindowTokens(modelSlug, modelLabel, compactionLimit) {
+  const matchStr = (raw) => {
+    const s = String(raw || '').toLowerCase();
+    if (!s) return 0;
+    if (/gemini[-\s]*(4|3\.8|3|2\.5)\b/.test(s)) return 1048576;
+    if (/claude[-\s]*(opus|sonnet|haiku)[-\s]*5\b/.test(s)) return 1000000;
+    if (/claude[-\s]*(opus|sonnet|haiku)[-\s]*4\b/.test(s)) return 200000;
+    return 0;
+  };
+  const bySlug = matchStr(modelSlug);
+  if (bySlug > 0) return bySlug;
+  const byLabel = matchStr(modelLabel);
+  if (byLabel > 0) return byLabel;
+  if (!String(modelSlug || '').trim() && !String(modelLabel || '').trim()) {
+    if (compactionLimit >= 500000) return 1000000;
+    if (compactionLimit > 0 && compactionLimit <= 200000) return 200000;
+  }
+  return 0;
 }
 
 function getDbSignature(cascadeId, conversationsDir) {
@@ -482,7 +549,8 @@ function parseConversationMetrics(cascadeId, conversationsDir) {
     return cached.payload;
   }
 
-  const contextLimitTokens = activeConfig.contextLimit || 256000;
+  const fallbackLimitTokens = activeConfig.contextLimit || 256000;
+  const overrideLimitTokens = activeConfig.contextLimitOverride || 0;
   let db;
   try {
     db = new DatabaseSync(dbPath, { readOnly: true });
@@ -512,11 +580,14 @@ function parseConversationMetrics(cascadeId, conversationsDir) {
     let totalOut = 0;
     let totalThink = 0;
     let totalResp = 0;
+    let sessionCompactionCount = 0;
 
     const parsed = rows.map((r) => {
       const top = parseProto(r.data);
       const chat = top.has(1) ? parseProto(top.get(1)) : new Map();
       const usage = chat.has(4) ? parseProto(chat.get(4)) : new Map();
+      const c9 = chat.has(9) ? parseProto(chat.get(9)) : null;
+      const c10 = c9 && c9.has(10) ? parseProto(c9.get(10)) : null;
       const ttftMap = chat.has(11) ? parseProto(chat.get(11)) : new Map();
       const streamMap = chat.has(12) ? parseProto(chat.get(12)) : new Map();
 
@@ -527,6 +598,16 @@ function parseConversationMetrics(cascadeId, conversationsDir) {
       const respTok = usage.get(10) || 0;
       const ttft = (ttftMap.get(1) || 0) + (ttftMap.get(2) || 0) / 1e9;
       const stream = (streamMap.get(1) || 0) + (streamMap.get(2) || 0) / 1e9;
+
+      const modelSlug = chat.has(19) ? decodeUtf8Safe(chat.get(19)) : '';
+      const modelLabel = chat.has(21) ? decodeUtf8Safe(chat.get(21)) : '';
+
+      if (c9 && c9.has(1) && c9.get(1) >= 0) {
+        const cpIdx = c9.has(2) ? c9.get(2) : 0;
+        const cpCount = cpIdx >= 0 ? cpIdx + 1 : 1;
+        if (cpCount > sessionCompactionCount) sessionCompactionCount = cpCount;
+      }
+      const detectedLimit = c10 && (c10.get(4) || 0) > 0 ? c10.get(4) : 0;
 
       totalIn += inTok;
       totalCache += cacheRead;
@@ -544,16 +625,33 @@ function parseConversationMetrics(cascadeId, conversationsDir) {
         respTok,
         ttft,
         stream,
-        totDur: ttft + stream
+        totDur: ttft + stream,
+        modelSlug,
+        modelLabel,
+        detectedLimit
       };
     });
 
-    // 过滤尾部或中间出现的 0 用量异常记录（如无 field 2 的元数据快照），防止 Ctx 显示为 0%
+    // 过滤尾部或中间出现的 0 用量异常记录（如无 field 2 的元数据快照），防止 Ctx 显示为 0% 或被未发送模型切换快照串扰
     const valid = parsed.filter((p) => p.ctx > 0 || p.outTok > 0);
     if (valid.length === 0) {
       const emptyPayload = { cascadeId, hasData: false, sig };
       setMetricsCache(dbPath, { sig, payload: emptyPayload });
       return emptyPayload;
+    }
+
+    let latestDetectedLimit = 0;
+    let latestModelSlug = '';
+    let latestModelLabel = '';
+    for (let i = valid.length - 1; i >= 0; i--) {
+      if (!latestDetectedLimit && valid[i].detectedLimit > 0) {
+        latestDetectedLimit = valid[i].detectedLimit;
+      }
+      if (!latestModelSlug && !latestModelLabel && (valid[i].modelSlug || valid[i].modelLabel)) {
+        latestModelSlug = valid[i].modelSlug;
+        latestModelLabel = valid[i].modelLabel;
+      }
+      if (latestDetectedLimit && (latestModelSlug || latestModelLabel)) break;
     }
 
     // 统计最后一条用户提问之后的模型规划步数，并从有效调用末尾切片汇总，消除按位置对齐的错位风险
@@ -570,51 +668,153 @@ function parseConversationMetrics(cascadeId, conversationsDir) {
       turnDur += turnSlice[i].totDur;
     }
 
+    const compactionLimitTokens =
+      overrideLimitTokens > 0
+        ? overrideLimitTokens
+        : latestDetectedLimit > 0
+          ? latestDetectedLimit
+          : fallbackLimitTokens;
+    const modelWindowTokens = inferModelWindowTokens(latestModelSlug, latestModelLabel, compactionLimitTokens);
+
     const last = valid[valid.length - 1];
     const streamTps = last.stream >= 0.25 ? last.outTok / last.stream : 0;
     const e2eTps = last.totDur > 0 ? last.outTok / last.totDur : 0;
     const displayTps = streamTps > 0 && streamTps <= 600 ? streamTps : e2eTps;
-    const ctxPct = Math.round((last.ctx / contextLimitTokens) * 100);
-    const ctxClass = ctxPct >= 90 ? 'ag-ctx-crit' : ctxPct >= 75 ? 'ag-ctx-warn' : 'ag-ctx-ok';
+    const ctxPct = Math.round((last.ctx / compactionLimitTokens) * 100);
+    const ctxState = ctxPct >= 90 ? 'crit' : ctxPct >= 75 ? 'warn' : ctxPct >= 55 ? 'mid' : 'ok';
+    const meterPct = Math.min(100, Math.max(2, ctxPct));
     const lastCacheRate = last.ctx > 0 ? ((last.cacheRead / last.ctx) * 100).toFixed(1) : '0.0';
     const sessionCacheRate = totalIn + totalCache > 0 ? ((totalCache / (totalIn + totalCache)) * 100).toFixed(1) : '0.0';
-    const remainCtx = Math.max(0, contextLimitTokens - last.ctx);
-    const limitKStr = Math.round(contextLimitTokens / 1000) + 'k';
+    const remainCtx = Math.max(0, compactionLimitTokens - last.ctx);
+    const limitStr = fmtLimitTok(compactionLimitTokens);
+    const modelWindowStr = modelWindowTokens > 0 ? fmtLimitTok(modelWindowTokens) : '';
+    const hasStreamTps = streamTps > 0 && streamTps <= 600;
 
-    const inlineHtml = [
-      `<span>${Math.round(displayTps)} tok/s</span>`,
-      `<span class="ag-sep">·</span>`,
-      `<span>TTFT ${last.ttft.toFixed(1)}s</span>`,
-      `<span class="ag-sep">·</span>`,
-      `<span>Ctx ${fmtTok(last.ctx)}/${limitKStr} <span class="${ctxClass}">(${ctxPct}%)</span></span>`,
-      `<span class="ag-sep">·</span>`,
-      `<span>Out ${fmtTok(last.outTok)}</span>`
-    ].join('');
+    const buildMetricsMarkup = (lang) => {
+      const isZh = lang === 'zh';
+      const ctxStateLabel = isZh
+        ? ctxState === 'crit'
+          ? '即将压缩'
+          : ctxState === 'warn'
+            ? '接近压缩'
+            : ctxState === 'mid'
+              ? '适中'
+              : '充裕'
+        : ctxState === 'crit'
+          ? 'Imminent'
+          : ctxState === 'warn'
+            ? 'Near Limit'
+            : ctxState === 'mid'
+              ? 'Moderate'
+              : 'Ample';
+      const cmpTitle = isZh
+        ? `本会话已自动压缩 ${sessionCompactionCount} 次`
+        : `Auto-compacted ${sessionCompactionCount}x in this session`;
+      const cmpBadgeHtml =
+        sessionCompactionCount > 0 ? ` <span class="ag-m-cmp-stat" title="${cmpTitle}">↻${sessionCompactionCount}</span>` : '';
 
-    const turnRowHtml =
-      turnSteps > 1
-        ? `<div class="ag-tt-row"><span class="ag-tt-lbl">本轮合计 (${turnSteps}步)</span><span class="ag-tt-val">输出 ${fmtNum(turnOut)} (思考 ${fmtNum(turnThink)} + 响应 ${fmtNum(turnResp)}) | 耗时 ${turnDur.toFixed(1)}s</span></div>`
-        : '';
+      const inlineHtml = [
+        `<span class="ag-m-seg"><span class="ag-m-v">${Math.round(displayTps)}</span> <span class="ag-m-k">tok/s</span></span>`,
+        `<span class="ag-m-seg"><span class="ag-m-k">TTFT</span> <span class="ag-m-v ag-m-v-sec">${last.ttft.toFixed(1)}s</span></span>`,
+        `<span class="ag-m-seg ag-m-seg-ctx" data-state="${ctxState}"><span class="ag-m-k">Cmp</span> <span class="ag-m-ctx-pair"><span class="ag-m-v ag-m-v-hero">${fmtTok(last.ctx)}</span><span class="ag-m-dim-num">/${limitStr}</span></span> <span class="ag-m-pct-stat" data-state="${ctxState}">${ctxPct}%</span>${cmpBadgeHtml}</span>`,
+        `<span class="ag-m-seg"><span class="ag-m-k">Out</span> <span class="ag-m-v ag-m-v-sec">${fmtTok(last.outTok)}</span></span>`
+      ].join(' ');
 
-    const tooltipHtml = [
-      `<div class="ag-tt-hdr">本轮最新调用 (Gen #${last.idx + 1})</div>`,
-      `<div class="ag-tt-row"><span class="ag-tt-lbl">生成速度</span><span class="ag-tt-val">${streamTps > 0 && streamTps <= 600 ? `流式 ${streamTps.toFixed(1)} tok/s | ` : ''}端到端 ${e2eTps.toFixed(1)} tok/s</span></div>`,
-      `<div class="ag-tt-row"><span class="ag-tt-lbl">响应耗时</span><span class="ag-tt-val">TTFT ${last.ttft.toFixed(2)}s | 流式 ${last.stream.toFixed(2)}s | 总计 ${last.totDur.toFixed(2)}s</span></div>`,
-      `<div class="ag-tt-row"><span class="ag-tt-lbl">当前上下文</span><span class="ag-tt-val">${fmtNum(last.ctx)} (新增 ${fmtNum(last.inTok)} + 缓存 ${fmtNum(last.cacheRead)}, ${lastCacheRate}%)</span></div>`,
-      `<div class="ag-tt-row"><span class="ag-tt-lbl">本步输出量</span><span class="ag-tt-val">${fmtNum(last.outTok)} (思考链 ${fmtNum(last.thinkTok)} + 正文/工具 ${fmtNum(last.respTok)})</span></div>`,
-      turnRowHtml,
-      `<div class="ag-tt-hdr ag-tt-sec">当前会话累计 (${userStepsCount} 轮提问 / ${valid.length} 次有效调用)</div>`,
-      `<div class="ag-tt-row"><span class="ag-tt-lbl">压缩水位线</span><span class="ag-tt-val">${fmtTok(last.ctx)} / ${limitKStr} (${ctxPct}%) · 距压缩余 ${fmtTok(remainCtx)}</span></div>`,
-      `<div class="ag-tt-row"><span class="ag-tt-lbl">累计输入量</span><span class="ag-tt-val">新增 ${fmtTok(totalIn)} + 缓存读取 ${fmtTok(totalCache)} (命中率 ${sessionCacheRate}%)</span></div>`,
-      `<div class="ag-tt-row"><span class="ag-tt-lbl">累计输出量</span><span class="ag-tt-val">总计 ${fmtTok(totalOut)} (思考链 ${fmtTok(totalThink)} + 正文/工具 ${fmtTok(totalResp)})</span></div>`
-    ].join('');
+      const hdrTitle = escHtml(latestModelLabel || latestModelSlug || (isZh ? '本轮最新调用' : 'Latest Generation'));
+      const remainTextHtml =
+        remainCtx > 0
+          ? isZh
+            ? `距压缩余 <span class="ag-v-sec-num">${fmtTok(remainCtx)}</span>`
+            : `Headroom <span class="ag-v-sec-num">${fmtTok(remainCtx)}</span>`
+          : `<span class="ag-tt-state-word" data-state="${ctxState}">${isZh ? '已达压缩阈值' : 'At threshold'}</span>`;
+      const cmpStatusHtml =
+        sessionCompactionCount > 0
+          ? `<span class="ag-v-accent-txt">${isZh ? `已压缩 ${sessionCompactionCount} 次` : `Compacted ${sessionCompactionCount}x`}</span>`
+          : isZh
+            ? '未触发压缩'
+            : 'Not compacted';
+      const ctxFootRightHtml = modelWindowStr
+        ? isZh
+          ? `原生窗口 <span class="ag-v-accent-num">${modelWindowStr}</span>，${cmpStatusHtml}`
+          : `Model window <span class="ag-v-accent-num">${modelWindowStr}</span>, ${cmpStatusHtml}`
+        : cmpStatusHtml;
+      const speedValHtml = hasStreamTps
+        ? isZh
+          ? `流式 <span class="ag-v-num">${streamTps.toFixed(1)}</span> tok/s，端到端 <span class="ag-v-sec-num">${e2eTps.toFixed(1)}</span> tok/s`
+          : `Stream <span class="ag-v-num">${streamTps.toFixed(1)}</span> tok/s, E2E <span class="ag-v-sec-num">${e2eTps.toFixed(1)}</span> tok/s`
+        : isZh
+          ? `端到端 <span class="ag-v-num">${e2eTps.toFixed(1)}</span> tok/s`
+          : `E2E <span class="ag-v-num">${e2eTps.toFixed(1)}</span> tok/s`;
+      const turnRowHtml =
+        turnSteps > 1
+          ? isZh
+            ? `<div class="ag-tt-row"><span class="ag-tt-lbl">本轮合计 (${turnSteps}步)</span><span class="ag-tt-val">输出 <span class="ag-v-num">${fmtNum(turnOut)}</span> (思考 <span class="ag-v-sec-num">${fmtNum(turnThink)}</span> + 响应 <span class="ag-v-sec-num">${fmtNum(turnResp)}</span>)，耗时 <span class="ag-v-sec-num">${turnDur.toFixed(1)}s</span></span></div>`
+            : `<div class="ag-tt-row"><span class="ag-tt-lbl">Turn (${turnSteps} steps)</span><span class="ag-tt-val">Out <span class="ag-v-num">${fmtNum(turnOut)}</span> (Think <span class="ag-v-sec-num">${fmtNum(turnThink)}</span> + Reply <span class="ag-v-sec-num">${fmtNum(turnResp)}</span>), <span class="ag-v-sec-num">${turnDur.toFixed(1)}s</span></span></div>`
+          : '';
+      const sessionSummaryStat = isZh
+        ? `${userStepsCount} 轮提问 / ${valid.length} 次调用`
+        : `${userStepsCount} ${userStepsCount === 1 ? 'turn' : 'turns'} / ${valid.length} ${valid.length === 1 ? 'call' : 'calls'}`;
+
+      const tooltipHtml = isZh
+        ? [
+            `<div class="ag-tt-hdr"><span>${hdrTitle}</span><span class="ag-tt-gen-stat">Gen #${last.idx + 1}</span></div>`,
+            `<div class="ag-tt-ctx-box" data-state="${ctxState}">`,
+            `<div class="ag-tt-ctx-top"><span class="ag-tt-ctx-title">上下文压缩水位 <span class="ag-tt-state-word" data-state="${ctxState}">${ctxStateLabel}</span></span><span class="ag-tt-ctx-stat"><span class="ag-tt-ctx-used-num">${fmtTok(last.ctx)}</span><span class="ag-tt-ctx-lim-num"> / ${limitStr}</span> <span class="ag-tt-pct-stat" data-state="${ctxState}">${ctxPct}%</span></span></div>`,
+            `<div class="ag-tt-meter"><div class="ag-tt-meter-fill" data-state="${ctxState}" style="width:${meterPct}%"></div></div>`,
+            `<div class="ag-tt-ctx-foot"><span class="ag-tt-foot-item">${remainTextHtml}</span><span class="ag-tt-foot-item">${ctxFootRightHtml}</span></div>`,
+            `</div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">生成速度</span><span class="ag-tt-val">${speedValHtml}</span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">响应耗时</span><span class="ag-tt-val">TTFT <span class="ag-v-sec-num">${last.ttft.toFixed(2)}s</span>，流式 <span class="ag-v-sec-num">${last.stream.toFixed(2)}s</span>，总计 <span class="ag-v-num">${last.totDur.toFixed(2)}s</span></span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">当前上下文</span><span class="ag-tt-val"><span class="ag-v-num">${fmtNum(last.ctx)}</span> (新增 <span class="ag-v-sec-num">${fmtNum(last.inTok)}</span> + 缓存 <span class="ag-v-sec-num">${fmtNum(last.cacheRead)}</span>，<span class="ag-v-accent-num">${lastCacheRate}%</span>)</span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">本步输出量</span><span class="ag-tt-val"><span class="ag-v-num">${fmtNum(last.outTok)}</span> (思考链 <span class="ag-v-sec-num">${fmtNum(last.thinkTok)}</span> + 正文/工具 <span class="ag-v-sec-num">${fmtNum(last.respTok)}</span>)</span></div>`,
+            turnRowHtml,
+            `<div class="ag-tt-hdr ag-tt-sec"><span>会话累计</span><span class="ag-tt-gen-stat">${sessionSummaryStat}</span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">累计输入量</span><span class="ag-tt-val">新增 <span class="ag-v-sec-num">${fmtTok(totalIn)}</span> + 缓存 <span class="ag-v-num">${fmtTok(totalCache)}</span> (命中率 <span class="ag-v-accent-num">${sessionCacheRate}%</span>)</span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">累计输出量</span><span class="ag-tt-val">总计 <span class="ag-v-num">${fmtTok(totalOut)}</span> (思考链 <span class="ag-v-sec-num">${fmtTok(totalThink)}</span> + 正文/工具 <span class="ag-v-sec-num">${fmtTok(totalResp)}</span>)</span></div>`
+          ].join('')
+        : [
+            `<div class="ag-tt-hdr"><span>${hdrTitle}</span><span class="ag-tt-gen-stat">Gen #${last.idx + 1}</span></div>`,
+            `<div class="ag-tt-ctx-box" data-state="${ctxState}">`,
+            `<div class="ag-tt-ctx-top"><span class="ag-tt-ctx-title">Auto-Compaction <span class="ag-tt-state-word" data-state="${ctxState}">${ctxStateLabel}</span></span><span class="ag-tt-ctx-stat"><span class="ag-tt-ctx-used-num">${fmtTok(last.ctx)}</span><span class="ag-tt-ctx-lim-num"> / ${limitStr}</span> <span class="ag-tt-pct-stat" data-state="${ctxState}">${ctxPct}%</span></span></div>`,
+            `<div class="ag-tt-meter"><div class="ag-tt-meter-fill" data-state="${ctxState}" style="width:${meterPct}%"></div></div>`,
+            `<div class="ag-tt-ctx-foot"><span class="ag-tt-foot-item">${remainTextHtml}</span><span class="ag-tt-foot-item">${ctxFootRightHtml}</span></div>`,
+            `</div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">Throughput</span><span class="ag-tt-val">${speedValHtml}</span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">Latency</span><span class="ag-tt-val">TTFT <span class="ag-v-sec-num">${last.ttft.toFixed(2)}s</span>, Stream <span class="ag-v-sec-num">${last.stream.toFixed(2)}s</span>, Total <span class="ag-v-num">${last.totDur.toFixed(2)}s</span></span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">Context Input</span><span class="ag-tt-val"><span class="ag-v-num">${fmtNum(last.ctx)}</span> (New <span class="ag-v-sec-num">${fmtNum(last.inTok)}</span> + Cache <span class="ag-v-sec-num">${fmtNum(last.cacheRead)}</span>, <span class="ag-v-accent-num">${lastCacheRate}%</span>)</span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">Step Output</span><span class="ag-tt-val"><span class="ag-v-num">${fmtNum(last.outTok)}</span> (Think <span class="ag-v-sec-num">${fmtNum(last.thinkTok)}</span> + Reply <span class="ag-v-sec-num">${fmtNum(last.respTok)}</span>)</span></div>`,
+            turnRowHtml,
+            `<div class="ag-tt-hdr ag-tt-sec"><span>Session Totals</span><span class="ag-tt-gen-stat">${sessionSummaryStat}</span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">Total Input</span><span class="ag-tt-val">New <span class="ag-v-sec-num">${fmtTok(totalIn)}</span> + Cache <span class="ag-v-num">${fmtTok(totalCache)}</span> (Hit <span class="ag-v-accent-num">${sessionCacheRate}%</span>)</span></div>`,
+            `<div class="ag-tt-row"><span class="ag-tt-lbl">Total Output</span><span class="ag-tt-val">Total <span class="ag-v-num">${fmtTok(totalOut)}</span> (Think <span class="ag-v-sec-num">${fmtTok(totalThink)}</span> + Reply <span class="ag-v-sec-num">${fmtTok(totalResp)}</span>)</span></div>`
+          ].join('');
+
+      return { inlineHtml, tooltipHtml };
+    };
+
+    const i18nMarkup = {
+      en: buildMetricsMarkup('en'),
+      zh: buildMetricsMarkup('zh')
+    };
+    const defaultLang =
+      activeConfig.metricsLang === 'zh' || (activeConfig.metricsLang !== 'en' && activeConfig.modules.i18n) ? 'zh' : 'en';
 
     const payload = {
       cascadeId,
       hasData: true,
       sig,
-      inlineHtml,
-      tooltipHtml
+      ctxState,
+      meta: {
+        modelSlug: latestModelSlug,
+        modelLabel: latestModelLabel,
+        compactionLimit: compactionLimitTokens,
+        modelWindow: modelWindowTokens,
+        compactionCount: sessionCompactionCount,
+        ctxPct
+      },
+      inlineHtml: i18nMarkup[defaultLang].inlineHtml,
+      tooltipHtml: i18nMarkup[defaultLang].tooltipHtml,
+      i18n: i18nMarkup
     };
     setMetricsCache(dbPath, { sig, payload });
     return payload;

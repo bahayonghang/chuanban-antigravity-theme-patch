@@ -43,6 +43,8 @@
 
   const DEFAULT_PRESET = boot.preset || 'high-contrast';
   const BOOT_SCHEME = boot.scheme === 'light' || boot.scheme === 'dark' || boot.scheme === 'auto' ? boot.scheme : 'auto';
+  const METRICS_LANG =
+    boot.metricsLang === 'zh' || boot.metricsLang === 'en' || boot.metricsLang === 'auto' ? boot.metricsLang : 'auto';
   const UI_FONT_IDS = ['wenyuan-serif', 'wenyuan-sans', 'anthropic', 'system'];
   const CODE_FONT_IDS = ['maple-bright', 'maple-mono', 'anthropic', 'sarasa'];
   const rawFontConfig = boot.fonts && typeof boot.fonts === 'object' && !Array.isArray(boot.fonts) ? boot.fonts : {};
@@ -162,6 +164,13 @@
         clearInterval(window.__ag_metrics_route_watcher);
       } catch (e) {}
       window.__ag_metrics_route_watcher = null;
+    }
+    if (window.__ag_metrics_ro) {
+      try {
+        window.__ag_metrics_ro.disconnect();
+      } catch (e) {}
+      window.__ag_metrics_ro = null;
+      window.__ag_metrics_ro_target = null;
     }
     applyThemeVars({});
     disconnectSchemeObservers();
@@ -468,8 +477,33 @@
     } else if (tt && tt.parentElement !== document.body && document.body) {
       document.body.appendChild(tt);
     }
+    if (tt && tt.getAttribute('role') !== 'tooltip') {
+      tt.setAttribute('role', 'tooltip');
+    }
     return tt;
   }
+
+  function showMetricsTooltip(pill) {
+    if (!pill) return;
+    const tt = ensureMetricsTooltip();
+    if (!tt || !tt.innerHTML) return;
+    const r = pill.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return;
+    const ttWidth = Math.min(456, Math.max(368, tt.offsetWidth || 410));
+    const left = Math.max(12, Math.min(r.left, window.innerWidth - ttWidth - 16));
+    const bottomPx = Math.min(window.innerHeight - r.top + 8, window.innerHeight - (tt.offsetHeight || 220) - 12);
+    tt.style.left = left + 'px';
+    tt.style.bottom = Math.max(8, bottomPx) + 'px';
+    tt.setAttribute('data-visible', '1');
+  }
+
+  function hideMetricsTooltip() {
+    const tt = document.getElementById('ag-live-metrics-tooltip');
+    if (tt) tt.removeAttribute('data-visible');
+  }
+
+  window.__ag_show_metrics_tooltip = showMetricsTooltip;
+  window.__ag_hide_metrics_tooltip = hideMetricsTooltip;
 
   function findFooterRow(box) {
     if (!box) return null;
@@ -522,30 +556,71 @@
     if (rightGroup && rightGroup.style.flex) rightGroup.style.removeProperty('flex');
 
     let pill = document.getElementById('ag-live-metrics-pill');
-    if (pill && (pill.getAttribute('data-v') !== '3' || pill.classList.contains('ag-pill-middle') || pill.classList.contains('ag-pill-wrapped'))) {
+    if (pill && (pill.classList.contains('ag-pill-middle') || pill.classList.contains('ag-pill-wrapped'))) {
       pill.classList.remove('ag-pill-middle', 'ag-pill-wrapped');
     }
     let isNewPill = false;
-    if (!pill) {
+    let preservedHtml = '';
+    let preservedDisplay = '';
+    if (pill && pill.getAttribute('data-v') !== '4') {
+      const oldText = pill.querySelector('#ag-live-metrics-text');
+      preservedHtml = oldText ? oldText.innerHTML : '';
+      preservedDisplay = pill.style.display || '';
+      const fresh = document.createElement('div');
+      pill.replaceWith(fresh);
+      pill = fresh;
       isNewPill = true;
+    } else if (!pill) {
       pill = document.createElement('div');
+      isNewPill = true;
+    }
+    if (isNewPill) {
       pill.id = 'ag-live-metrics-pill';
-      pill.setAttribute('data-v', '3');
+      pill.setAttribute('data-v', '4');
+      pill.tabIndex = 0;
+      pill.setAttribute('role', 'status');
+      pill.setAttribute('aria-live', 'off');
+      pill.setAttribute('aria-label', 'Session live metrics');
+      pill.setAttribute('aria-describedby', 'ag-live-metrics-tooltip');
       pill.innerHTML = '<span id="ag-live-metrics-text"></span>';
+      if (preservedHtml) {
+        const textNode = pill.querySelector('#ag-live-metrics-text');
+        if (textNode) textNode.innerHTML = preservedHtml;
+      }
+      if (preservedDisplay) {
+        pill.style.display = preservedDisplay;
+      }
       pill.addEventListener('mouseenter', () => {
-        const tt = ensureMetricsTooltip();
-        if (!tt || !tt.innerHTML) return;
-        const r = pill.getBoundingClientRect();
-        const ttWidth = Math.min(440, Math.max(370, tt.offsetWidth || 400));
-        const left = Math.max(12, Math.min(r.left, window.innerWidth - ttWidth - 16));
-        const bottomPx = Math.min(window.innerHeight - r.top + 8, window.innerHeight - (tt.offsetHeight || 220) - 12);
-        tt.style.left = left + 'px';
-        tt.style.bottom = Math.max(8, bottomPx) + 'px';
-        tt.setAttribute('data-visible', '1');
+        if (typeof window.__ag_show_metrics_tooltip === 'function') {
+          window.__ag_show_metrics_tooltip(pill);
+        }
       });
       pill.addEventListener('mouseleave', () => {
-        const tt = document.getElementById('ag-live-metrics-tooltip');
-        if (tt) tt.removeAttribute('data-visible');
+        if (document.activeElement === pill) return;
+        if (typeof window.__ag_hide_metrics_tooltip === 'function') {
+          window.__ag_hide_metrics_tooltip();
+        }
+      });
+      pill.addEventListener('focus', () => {
+        if (typeof window.__ag_show_metrics_tooltip === 'function') {
+          window.__ag_show_metrics_tooltip(pill);
+        }
+      });
+      pill.addEventListener('blur', () => {
+        if (typeof window.__ag_hide_metrics_tooltip === 'function') {
+          window.__ag_hide_metrics_tooltip();
+        }
+      });
+      pill.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' || ev.key === 'Esc') {
+          const tt = document.getElementById('ag-live-metrics-tooltip');
+          if (tt && tt.getAttribute('data-visible') === '1') {
+            ev.stopPropagation();
+            if (typeof window.__ag_hide_metrics_tooltip === 'function') {
+              window.__ag_hide_metrics_tooltip();
+            }
+          }
+        }
       });
     }
 
@@ -614,6 +689,13 @@
 
   window.__ag_ensure_metrics_pill_fn = ensureMetricsPill;
 
+  function resolveMetricsLang() {
+    if (METRICS_LANG === 'zh' || METRICS_LANG === 'en') return METRICS_LANG;
+    if (MODULES.i18n) return 'zh';
+    const docLang = (document.documentElement && document.documentElement.lang) || '';
+    return /^zh\b/i.test(docLang) ? 'zh' : 'en';
+  }
+
   window.__ag_render_metrics = function (payload) {
     try {
       if (!MODULES.metrics) return;
@@ -627,14 +709,29 @@
         if (ttEl) ttEl.removeAttribute('data-visible');
         return;
       }
+      const lang = resolveMetricsLang();
+      const localized = payload.i18n && payload.i18n[lang] ? payload.i18n[lang] : payload;
+      const nextInlineHtml = localized.inlineHtml || payload.inlineHtml || '';
+      const nextTooltipHtml = localized.tooltipHtml || payload.tooltipHtml || '';
+      const nextAriaLabel = lang === 'zh' ? '会话实时遥测指标' : 'Session live metrics';
+      if (pill.getAttribute('aria-label') !== nextAriaLabel) {
+        pill.setAttribute('aria-label', nextAriaLabel);
+      }
+      const ctxState = payload.ctxState || 'ok';
+      if (pill.getAttribute('data-ctx-state') !== ctxState) {
+        pill.setAttribute('data-ctx-state', ctxState);
+      }
+      if (ttEl && ttEl.getAttribute('data-ctx-state') !== ctxState) {
+        ttEl.setAttribute('data-ctx-state', ctxState);
+      }
       const textEl = pill.querySelector('#ag-live-metrics-text');
       let textChanged = false;
-      if (textEl && textEl.innerHTML !== payload.inlineHtml) {
-        textEl.innerHTML = payload.inlineHtml;
+      if (textEl && textEl.innerHTML !== nextInlineHtml) {
+        textEl.innerHTML = nextInlineHtml;
         textChanged = true;
       }
-      if (ttEl && ttEl.innerHTML !== payload.tooltipHtml) {
-        ttEl.innerHTML = payload.tooltipHtml;
+      if (ttEl && ttEl.innerHTML !== nextTooltipHtml) {
+        ttEl.innerHTML = nextTooltipHtml;
       }
       if (pill.style.display !== 'inline-flex') {
         pill.style.display = 'inline-flex';
@@ -643,10 +740,16 @@
       if (textChanged) {
         ensureMetricsPill(true);
       }
+      if (ttEl && ttEl.getAttribute('data-visible') === '1' && typeof window.__ag_show_metrics_tooltip === 'function') {
+        window.__ag_show_metrics_tooltip(pill);
+      }
     } catch (e) {}
   };
 
   window.__ag_update_live_metrics = window.__ag_render_metrics;
+  if (window.__ag_last_metrics && window.__ag_last_metrics.hasData) {
+    window.__ag_render_metrics(window.__ag_last_metrics);
+  }
 
   function checkRouteAndMountMetrics() {
     try {
