@@ -87,6 +87,8 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 - 会话里：输入框常驻淡蜡封，悬停/聚焦用 `--ag-wax-seal-hover`（默认亮色 high-contrast 为 `#C6613F`，其它亮色预设为 `#74221A`）。
 - 关蜡封是 `data-ag-wax-seal="off"`，对应模块 `composerWaxSeal: false`。
 
+输入框底部的全局 `span` 强墨色与字重规则（`#antigravity\.agentSidePanelInputBox span...`）必须通过 `:not(#ag-live-metrics-pill):not(#ag-live-metrics-pill *)` 显式豁免实时指标胶囊，避免 `(1, 4, 2)` 特异性覆盖胶囊键名弱化色与四阶水位语义色。胶囊与 `#ag-live-metrics-tooltip` 统一消费 `:root`（亮色）与 `html[data-ag-scheme="dark"]`（暗色）的 `--ag-metric-*` 令牌：详情卡顶部设独立焦点卡 `.ag-tt-ctx-box` 突出当前压缩水位，文字采用三级墨色（主数值 `--ag-metric-value`、次级数值 `--ag-metric-value-sec`、键名与括号说明 `--ag-metric-label`）配暖陶土强调色 `--ag-metric-accent`，上下文压缩百分比按 `ok`（`<55%` 青瓷绿）、`mid`（`55%–74%` 暖赭金）、`warn`（`75%–89%` 琥珀橙）、`crit`（`>=90%` 朱砂红）四阶矿物色渲染微底色胶囊徽标。守护进程同时生成 `payload.i18n.{en,zh}` 双语文案（并把 `metricsLang` 纳入内容哈希），前端 `resolveMetricsLang()` 默认（`metricsLang="auto"`）在 `modules.i18n === true` 或 `<html lang="zh*">` 时选中文、其余英文界面选英文，热重载时即刻重绘已缓存的 `window.__ag_last_metrics`。键名用 `var(--font-sans)`，等宽数值类名统一带 `-num` / `-stat` 后缀以对齐 `var(--font-mono)` + `tabular-nums` 数据语义门禁；组间用 CSS 细竖线而非 `·` 中点串，进度条不声明布局 `width` 过渡，保持恒定 `1px` 边框零位移、立即显现的 `:focus-visible` 焦点环及 `prefers-reduced-motion: reduce` 回退。热重载升级已有胶囊节点时通过 `data-v` 版本号原位替换，避免匿名事件监听器重复挂载或丢失键盘事件。
+
 改颜色优先加 CSS 变量，让 `user/config.json` 的 `themeVars` 能覆盖。变量写到 `documentElement`，删除键时运行时会 `removeProperty`。
 
 ### 默认亮色表面

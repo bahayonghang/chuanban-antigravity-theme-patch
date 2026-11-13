@@ -56,6 +56,8 @@ PID 锁文件是 `os.tmpdir()` 下的 `ag-theme-daemon-${pidKey}.pid`。`--once`
 - 注入前过滤：有 `webSocketDebuggerUrl`、不是 `devtools://`、`isAllowedOrigin`、标题不含 `Launchpad`，并且是 `type === 'page'`，或是符合 Agent 面板判定的 `iframe`。`install.mjs` 的 `verify` 使用同一判定，并在多个端口里优先选 Agent 面板。
 - 会话 id 只接受 `/^[0-9a-f-]{36}$/i`。不匹配直接 `return null`，见 `parseConversationMetrics`。
 - 打开会话库必须 `{ readOnly: true }`。这个补丁不写会话库。
+- `parseProto` 的 wire type `0`（varint）必须按 64 位 `BigInt` 二补数解码有符号负值（如未发生自动压缩时 `chat[9][2] = -1`），不能用浮点 `Math.pow(2, s)` 导致 53 位精度溢出。
+- 动态上下文与自动压缩遥测从 `valid`（`ctx > 0 || outTok > 0` 的有效调用，跳过仅切换模型未发消息产生的尾部 `ctx = 0` 快照行）尾部回溯提取：`chat[9][10][4]` 为宿主实时自动压缩阈值（如 Gemini `256000`、Claude 5.5 `840000`、Claude 4.6 `160000`），`chat[19]` / `chat[21]` 成对取自同一有效调用以推导模型原生窗口（未知新模型不编造原生窗口）。仅当配置了 `contextLimitOverride > 0` 或非默认 `contextLimit !== 256000` 时才覆盖 SQLite 实测压缩线。
 - 指标缓存是进程内 `Map`，上限 `MAX_METRICS_CACHE_SIZE = 30`。不要把指标落到仓库或 `user/`。
 
 ## Scenario: 经典版双通道，不注入 IDE
