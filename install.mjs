@@ -3,12 +3,13 @@
  * chuanban-antigravity-theme-patch · 一键安装、自检、安全模式验证与回滚 CLI (install.mjs)
  *
  * 支持子命令：
- *   node install.mjs install [--channel auto|stable|insiders] [--preset high-contrast] [--scheme auto|light|dark] [--target-dir <dir>]
+ *   node install.mjs install [--channel auto|stable|insiders] [--preset high-contrast] [--scheme auto|light|dark] [--target-dir <dir>] [--sync-user] [--register-service]
  *   node install.mjs doctor  [--channel auto|stable|insiders] [--target-dir <dir>]
  *   node install.mjs verify  [--safe-mode] [--channel auto|stable|insiders] [--target-dir <dir>]
  *   node install.mjs rollback [--target-dir <dir>]
  *   node install.mjs uninstall [--target-dir <dir>]
  *   node install.mjs build-manifest
+ *   node install.mjs pack
  */
 
 import fs from 'node:fs';
@@ -48,6 +49,36 @@ function getArg(flag, fallback = null) {
 function sha256File(filePath) {
   const buf = fs.readFileSync(filePath);
   return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+function canonicalPath(p) {
+  const resolved = path.resolve(p);
+  try {
+    return fs.realpathSync.native ? fs.realpathSync.native(resolved) : fs.realpathSync(resolved);
+  } catch {
+    const parent = path.dirname(resolved);
+    if (parent && parent !== resolved) {
+      try {
+        const realParent = fs.realpathSync.native ? fs.realpathSync.native(parent) : fs.realpathSync(parent);
+        return path.join(realParent, path.basename(resolved));
+      } catch {}
+    }
+    return resolved;
+  }
+}
+
+function isSameTargetPath(a, b) {
+  const pa = canonicalPath(a);
+  const pb = canonicalPath(b);
+  return process.platform === 'win32' || process.platform === 'darwin'
+    ? pa.toLowerCase() === pb.toLowerCase()
+    : pa === pb;
+}
+
+// 自定义目录且未要求登记服务时，不改本机 argv、包装脚本和正在运行的守护进程。
+function isCustomSandboxTarget(targetDir) {
+  const defaultTarget = path.join(os.homedir(), '.gemini', 'antigravity', 'theme-patch');
+  return hasFlag('--target-dir') && !isSameTargetPath(targetDir, defaultTarget) && !hasFlag('--register-service');
 }
 
 function resolveDefaultTargetDir() {
@@ -91,6 +122,148 @@ function buildManifest(baseDir = __dirname) {
   const manifestPath = path.join(coreDir, 'manifest.json');
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
   return manifest;
+}
+
+function buildDistZip(baseDir = __dirname) {
+  const manifest = buildManifest(baseDir);
+  const distDir = path.join(baseDir, 'dist');
+  fs.mkdirSync(distDir, { recursive: true });
+  const zipName = `${manifest.name}-v${manifest.version}.zip`;
+  const zipPath = path.join(distDir, zipName);
+  if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+
+  const includeItems = [
+    'SKILL.md',
+    'README.md',
+    'CHANGELOG.md',
+    'install.mjs',
+    '.gitattributes',
+    '.gitignore',
+    'core',
+    'user',
+    'assets'
+  ].filter((item) => fs.existsSync(path.join(baseDir, item)));
+
+  const allowedUserFiles = new Set(['config.json', 'custom.css', 'custom.js', 'i18n.override.json']);
+  const skipNames = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
+  const entriesToPack = [];
+  const collectEntries = (relPosix) => {
+    const fullPath = path.join(baseDir, ...relPosix.split('/'));
+    if (!fs.existsSync(fullPath)) return;
+    const st = fs.statSync(fullPath);
+    if (st.isDirectory()) {
+      for (const child of fs.readdirSync(fullPath).sort()) {
+        if (skipNames.has(child)) continue;
+        if (relPosix === 'user' && !allowedUserFiles.has(child)) continue;
+        collectEntries(`${relPosix}/${child}`);
+      }
+    } else if (st.isFile()) {
+      entriesToPack.push({ abs: fullPath, entry: relPosix });
+    }
+  };
+  for (const item of includeItems) {
+    collectEntries(item.replace(/\\/g, '/'));
+  }
+
+  if (process.platform === 'win32') {
+    const listTmpPath = path.join(os.tmpdir(), `ag-pack-entries-${process.pid}-${Date.now()}.json`);
+    fs.writeFileSync(listTmpPath, JSON.stringify(entriesToPack), 'utf8');
+    try {
+      const psScript = [
+        '$ErrorActionPreference = "Stop"',
+        'Add-Type -AssemblyName System.IO.Compression',
+        'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+        `$zipPath = '${zipPath.replace(/'/g, "''")}'`,
+        `$listPath = '${listTmpPath.replace(/'/g, "''")}'`,
+        '$parsed = Get-Content -LiteralPath $listPath -Raw -Encoding UTF8 | ConvertFrom-Json',
+        '$items = @(foreach ($x in $parsed) { if ($null -ne $x) { $x } })',
+        '$zip = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)',
+        'try {',
+        '  foreach ($it in $items) {',
+        '    [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, [string]$it.abs, [string]$it.entry, [System.IO.Compression.CompressionLevel]::Optimal)',
+        '  }',
+        '} finally {',
+        '  $zip.Dispose()',
+        '}',
+        '$zr = [System.IO.Compression.ZipFile]::OpenRead($zipPath)',
+        '$sha = [System.Security.Cryptography.SHA256]::Create()',
+        '$out = @{ hasBackslash = $false; core = @{} }',
+        'try {',
+        '  foreach ($e in $zr.Entries) {',
+        '    if ($e.FullName.Contains("\\")) { $out.hasBackslash = $true }',
+        '    if ($e.FullName.StartsWith("core/") -and $e.Name -ne "") {',
+        '      $s = $e.Open()',
+        '      $ms = New-Object System.IO.MemoryStream',
+        '      try { $s.CopyTo($ms) } finally { $s.Dispose() }',
+        '      $bytes = $ms.ToArray()',
+        '      $ms.Dispose()',
+        '      $hash = ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()',
+        '      $out.core[$e.Name] = @{ sha256 = $hash; bytes = $bytes.Length }',
+        '    }',
+        '  }',
+        '} finally {',
+        '  $sha.Dispose()',
+        '  $zr.Dispose()',
+        '}',
+        '$out | ConvertTo-Json -Compress -Depth 4'
+      ].join('; ');
+
+      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
+        cwd: baseDir,
+        encoding: 'utf8',
+        windowsHide: true,
+        maxBuffer: 10 * 1024 * 1024
+      });
+      if (r.status !== 0) {
+        if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+        throw new Error(`ZipArchive pack failed: ${(r.stderr || r.stdout || '').trim()}`);
+      }
+      const verifyData = JSON.parse(String(r.stdout || '').trim());
+      if (verifyData.hasBackslash) {
+        fs.unlinkSync(zipPath);
+        throw new Error(`Verification failed: backslash path detected in ${zipName}`);
+      }
+      for (const [name, meta] of Object.entries(manifest.files)) {
+        const actual = verifyData.core?.[name];
+        if (!actual) {
+          fs.unlinkSync(zipPath);
+          throw new Error(`Verification failed: missing core/${name} in ${zipName}`);
+        }
+        if (actual.sha256 !== meta.sha256 || actual.bytes !== meta.bytes) {
+          fs.unlinkSync(zipPath);
+          throw new Error(
+            `Verification failed for core/${name} in ${zipName}: expected ${meta.sha256} (${meta.bytes}B), got ${actual.sha256} (${actual.bytes}B)`
+          );
+        }
+      }
+    } finally {
+      try {
+        if (fs.existsSync(listTmpPath)) fs.unlinkSync(listTmpPath);
+      } catch {}
+    }
+  } else {
+    const r = spawnSync('zip', ['-q', zipPath, ...entriesToPack.map((e) => e.entry)], {
+      cwd: baseDir,
+      stdio: 'inherit'
+    });
+    if (r.status !== 0) throw new Error('zip command failed');
+    // 逐文件校验 zip 内 core/* 的 SHA-256 与字节数与 manifest 完全一致，杜绝脏包发布
+    for (const [name, meta] of Object.entries(manifest.files)) {
+      const uz = spawnSync('unzip', ['-p', zipPath, `core/${name}`], { maxBuffer: 20 * 1024 * 1024 });
+      if (uz.status !== 0) {
+        fs.unlinkSync(zipPath);
+        throw new Error(`Verification failed: missing core/${name} in ${zipName}`);
+      }
+      const actualSha = crypto.createHash('sha256').update(uz.stdout).digest('hex');
+      if (actualSha !== meta.sha256 || uz.stdout.length !== meta.bytes) {
+        fs.unlinkSync(zipPath);
+        throw new Error(
+          `Verification failed for core/${name} in ${zipName}: expected ${meta.sha256} (${meta.bytes}B), got ${actualSha} (${uz.stdout.length}B)`
+        );
+      }
+    }
+  }
+  return { zipPath, version: manifest.version, filesVerified: Object.keys(manifest.files).length };
 }
 
 function verifyCoreIntegrity(baseDir = __dirname) {
@@ -438,7 +611,9 @@ async function runDoctor() {
   const targetDir = path.resolve(getArg('--target-dir', resolveDefaultTargetDir()));
   const env = await detectEnvironment(channel);
   const integrity = verifyCoreIntegrity(targetDir);
-  const live = await inspectLiveWindow(env);
+  const live = isCustomSandboxTarget(targetDir)
+    ? { skipped: true, reason: 'custom-target-dir' }
+    : await inspectLiveWindow(env);
 
   const report = {
     ok: Boolean(env.nodeBasicOk && integrity.ok),
@@ -633,6 +808,8 @@ async function runInstall() {
   const scheme = schemeArg === 'light' || schemeArg === 'dark' || schemeArg === 'auto' ? schemeArg : null;
   const defaultTarget = path.join(os.homedir(), '.gemini', 'antigravity', 'theme-patch');
   const targetDir = path.resolve(getArg('--target-dir', defaultTarget));
+  const syncUser = hasFlag('--sync-user');
+  const sandboxTarget = isCustomSandboxTarget(targetDir);
 
   const env = await detectEnvironment(channel);
   if (!env.nodeBasicOk) {
@@ -650,6 +827,7 @@ async function runInstall() {
   const targetUser = path.join(targetDir, 'user');
 
   let backupCreated = null;
+  let userBackupCreated = null;
   if (path.resolve(__dirname) !== targetDir) {
     fs.mkdirSync(targetDir, { recursive: true });
 
@@ -676,7 +854,14 @@ async function runInstall() {
     fs.rmSync(targetCore, { recursive: true, force: true });
     copyDirRecursive(srcCore, targetCore);
 
-    // user/ 层永不覆盖已有文件
+    // user/ 层默认只补缺失文件。--sync-user 先整目录备份，再覆盖四个模板，不删用户多出来的文件。
+    if (syncUser && fs.existsSync(targetUser)) {
+      const userStamp = new Date().toISOString().replace(/[:.]/g, '-') + '-user';
+      const stampedUserBackupDir = path.join(backupsDir, userStamp);
+      fs.mkdirSync(backupsDir, { recursive: true });
+      copyDirRecursive(targetUser, stampedUserBackupDir);
+      userBackupCreated = stampedUserBackupDir;
+    }
     fs.mkdirSync(targetUser, { recursive: true });
     for (const item of fs.readdirSync(srcUser)) {
       const s = path.join(srcUser, item);
@@ -685,8 +870,15 @@ async function runInstall() {
         fs.copyFileSync(s, d);
       }
     }
+    if (syncUser) {
+      for (const item of ['config.json', 'custom.css', 'i18n.override.json', 'custom.js']) {
+        const s = path.join(srcUser, item);
+        const d = path.join(targetUser, item);
+        if (fs.existsSync(s)) fs.copyFileSync(s, d);
+      }
+    }
 
-    for (const docFile of ['install.mjs', 'SKILL.md', 'README.md']) {
+    for (const docFile of ['install.mjs', 'SKILL.md', 'README.md', 'CHANGELOG.md']) {
       const s = path.join(__dirname, docFile);
       const d = path.join(targetDir, docFile);
       if (fs.existsSync(s)) fs.copyFileSync(s, d);
@@ -725,30 +917,35 @@ async function runInstall() {
   }
   fs.writeFileSync(userConfigPath, JSON.stringify(currentCfg, null, 2) + '\n', 'utf8');
 
-  // 自动检查并修补 ~/.antigravity/argv.json (remote-debugging-port)
-  const argvStatus = ensureArgvRemoteDebugging(currentCfg.channel);
-
-  // 创建兼容包装脚本 ~/.gemini/antigravity/scripts/antigravity-font-daemon.mjs（使用 pathToFileURL 兼容 Windows C:\ 路径）
-  const scriptsDir = path.join(os.homedir(), '.gemini', 'antigravity', 'scripts');
-  fs.mkdirSync(scriptsDir, { recursive: true });
-  const wrapperDaemon = path.join(scriptsDir, 'antigravity-font-daemon.mjs');
   const realDaemon = path.join(targetCore, 'daemon.mjs');
-  const realDaemonUrl = pathToFileURL(realDaemon).href;
-  fs.writeFileSync(
-    wrapperDaemon,
-    `#!/usr/bin/env node\n// Auto-generated wrapper -> ${realDaemon}\nawait import(${JSON.stringify(realDaemonUrl)});\n`,
-    { encoding: 'utf8', mode: 0o755 }
-  );
+  let argvStatus = { skipped: true, reason: 'custom-target-dir' };
+  let serviceInfo = { skipped: true, reason: 'custom-target-dir' };
+  let live = { skipped: true, reason: 'custom-target-dir' };
+  if (!sandboxTarget) {
+    // 自动检查并修补 ~/.antigravity/argv.json (remote-debugging-port)
+    argvStatus = ensureArgvRemoteDebugging(currentCfg.channel);
 
-  // 注册/更新跨平台自启服务
-  const serviceInfo = registerSystemService(targetDir, wrapperDaemon);
+    // 创建兼容包装脚本 ~/.gemini/antigravity/scripts/antigravity-font-daemon.mjs（使用 pathToFileURL 兼容 Windows C:\ 路径）
+    const scriptsDir = path.join(os.homedir(), '.gemini', 'antigravity', 'scripts');
+    fs.mkdirSync(scriptsDir, { recursive: true });
+    const wrapperDaemon = path.join(scriptsDir, 'antigravity-font-daemon.mjs');
+    const realDaemonUrl = pathToFileURL(realDaemon).href;
+    fs.writeFileSync(
+      wrapperDaemon,
+      `#!/usr/bin/env node\n// Auto-generated wrapper -> ${realDaemon}\nawait import(${JSON.stringify(realDaemonUrl)});\n`,
+      { encoding: 'utf8', mode: 0o755 }
+    );
 
-  // 立即执行一次 --once 同步注入
-  spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', realDaemon, '--once'], {
-    stdio: 'inherit'
-  });
+    // 注册/更新跨平台自启服务
+    serviceInfo = registerSystemService(targetDir, wrapperDaemon);
 
-  const live = await inspectLiveWindow(env);
+    // 立即执行一次 --once 同步注入
+    spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', realDaemon, '--once'], {
+      stdio: 'inherit'
+    });
+
+    live = await inspectLiveWindow(env);
+  }
   console.log(
     '\n[Install Complete]',
     JSON.stringify(
@@ -756,6 +953,8 @@ async function runInstall() {
         ok: true,
         targetDir,
         backupCreated,
+        userSynced: syncUser,
+        userBackupCreated,
         argvStatus,
         serviceInfo,
         config: currentCfg,
@@ -771,16 +970,20 @@ async function runVerify() {
   const safeMode = hasFlag('--safe-mode');
   const channel = getArg('--channel', 'auto');
   const targetDir = path.resolve(getArg('--target-dir', resolveDefaultTargetDir()));
+  const sandboxTarget = isCustomSandboxTarget(targetDir);
   const daemonPath = path.join(targetDir, 'core', 'daemon.mjs');
 
   const daemonArgs = ['--disable-warning=ExperimentalWarning', daemonPath, '--once'];
   if (safeMode) daemonArgs.push('--safe-mode');
   if (channel && channel !== 'auto') daemonArgs.push('--channel', channel);
 
-  spawnSync(process.execPath, daemonArgs, { stdio: 'inherit' });
-  const env = await detectEnvironment(channel);
-  const live = await inspectLiveWindow(env);
-  const ok = Boolean(live.reachable && (live.state?.hasStyle || live.pages === 0));
+  let live = { skipped: true, reason: 'custom-target-dir' };
+  if (!sandboxTarget) {
+    spawnSync(process.execPath, daemonArgs, { stdio: 'inherit' });
+    const env = await detectEnvironment(channel);
+    live = await inspectLiveWindow(env);
+  }
+  const ok = sandboxTarget ? true : Boolean(live.reachable && (live.state?.hasStyle || live.pages === 0));
   console.log(
     JSON.stringify(
       {
@@ -799,57 +1002,67 @@ async function runVerify() {
 
 async function runRollback() {
   const targetDir = path.resolve(getArg('--target-dir', resolveDefaultTargetDir()));
+  const sandboxTarget = isCustomSandboxTarget(targetDir);
   const targetCore = path.join(targetDir, 'core');
   const targetPrev = path.join(targetDir, 'core.prev');
   const backupsDir = path.join(targetDir, 'backups');
 
+  const isValidCoreBackup = (dir) =>
+    fs.existsSync(path.join(dir, 'daemon.mjs')) && fs.existsSync(path.join(dir, 'runtime.js'));
+
   let restoreSource = null;
-  if (fs.existsSync(targetPrev)) {
+  if (isValidCoreBackup(targetPrev)) {
     restoreSource = targetPrev;
   } else if (fs.existsSync(backupsDir)) {
-    const stamps = fs.readdirSync(backupsDir).sort().reverse();
+    const stamps = fs
+      .readdirSync(backupsDir)
+      .filter((name) => !name.endsWith('-user') && isValidCoreBackup(path.join(backupsDir, name)))
+      .sort()
+      .reverse();
     if (stamps.length > 0) {
       restoreSource = path.join(backupsDir, stamps[0]);
     }
   }
 
   if (!restoreSource) {
-    console.error(`[ERROR] No backup found at ${targetPrev} or ${backupsDir}`);
+    console.error(`[ERROR] No valid core backup found at ${targetPrev} or ${backupsDir}`);
     process.exit(1);
   }
 
   fs.rmSync(targetCore, { recursive: true, force: true });
   copyDirRecursive(restoreSource, targetCore);
 
-  // 重启守护进程并立即执行一次 --once 重新注入
+  // 重启守护进程并立即执行一次 --once 重新注入。自定义沙箱不碰本机服务。
   const realDaemon = path.join(targetCore, 'daemon.mjs');
   const wrapperDaemon = path.join(os.homedir(), '.gemini', 'antigravity', 'scripts', 'antigravity-font-daemon.mjs');
-  if (process.platform === 'darwin') {
-    const uid = process.getuid ? process.getuid() : 501;
-    try {
-      execSync(`launchctl kickstart -k gui/${uid}/com.antigravity.customfont 2>/dev/null || launchctl kickstart -k gui/${uid}/com.antigravity.theme 2>/dev/null || true`);
-    } catch {}
-  } else if (process.platform === 'linux') {
-    try {
-      execSync('systemctl --user restart antigravity-theme.service 2>/dev/null || true');
-    } catch {}
-  } else if (process.platform === 'win32') {
-    stopRunningDaemonProcesses();
-    try {
-      const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', fs.existsSync(wrapperDaemon) ? wrapperDaemon : realDaemon], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true
-      });
-      child.unref();
-    } catch {}
+  let live = { skipped: true, reason: 'custom-target-dir' };
+  if (!sandboxTarget) {
+    if (process.platform === 'darwin') {
+      const uid = process.getuid ? process.getuid() : 501;
+      try {
+        execSync(`launchctl kickstart -k gui/${uid}/com.antigravity.customfont 2>/dev/null || launchctl kickstart -k gui/${uid}/com.antigravity.theme 2>/dev/null || true`);
+      } catch {}
+    } else if (process.platform === 'linux') {
+      try {
+        execSync('systemctl --user restart antigravity-theme.service 2>/dev/null || true');
+      } catch {}
+    } else if (process.platform === 'win32') {
+      stopRunningDaemonProcesses();
+      try {
+        const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', fs.existsSync(wrapperDaemon) ? wrapperDaemon : realDaemon], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        });
+        child.unref();
+      } catch {}
+    }
+    spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', realDaemon, '--once'], {
+      stdio: 'inherit'
+    });
+    const env = await detectEnvironment('auto');
+    live = await inspectLiveWindow(env);
   }
-  spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', realDaemon, '--once'], {
-    stdio: 'inherit'
-  });
-
-  const env = await detectEnvironment('auto');
-  const live = await inspectLiveWindow(env);
   console.log(
     JSON.stringify(
       {
@@ -916,16 +1129,84 @@ function runInstallFonts() {
   };
 
   walkFonts(path.resolve(fromDir));
-  if (process.platform === 'linux') {
+  let fontBroadcastOk = process.platform !== 'win32';
+  let fontRegisteredCount = 0;
+  if (process.platform === 'win32' && installed.length > 0) {
+    fontBroadcastOk = false;
+    try {
+      const fontListJson = JSON.stringify(Array.from(new Set(installed)));
+      const listTmp = path.join(os.tmpdir(), `ag-fonts-${process.pid}-${Date.now()}.json`);
+      fs.writeFileSync(listTmp, fontListJson, 'utf8');
+      try {
+        const psNotify = [
+          '$ErrorActionPreference = "Stop"',
+          'Add-Type -TypeDefinition @"',
+          'using System; using System.Runtime.InteropServices;',
+          'public static class AgFontBroadcast {',
+          '  [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern int AddFontResource(string lpFileName);',
+          '  [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool SendNotifyMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);',
+          '}',
+          '"@',
+          `$parsed = Get-Content -LiteralPath '${listTmp.replace(/'/g, "''")}' -Raw -Encoding UTF8 | ConvertFrom-Json`,
+          '$paths = @(foreach ($x in $parsed) { if ($null -ne $x) { [string]$x } })',
+          '$added = 0',
+          'foreach ($fp in $paths) { if ($fp -and ([AgFontBroadcast]::AddFontResource($fp) -gt 0)) { $added++ } }',
+          '$notified = [AgFontBroadcast]::SendNotifyMessage([IntPtr]0xffff, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero)',
+          '@{ added = $added; notified = [bool]$notified } | ConvertTo-Json -Compress'
+        ].join('\n');
+        const psRes = spawnSync(
+          'powershell',
+          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psNotify],
+          {
+            encoding: 'utf8',
+            windowsHide: true,
+            timeout: 25000
+          }
+        );
+        if (psRes.status === 0) {
+          const notifyData = JSON.parse(String(psRes.stdout || '').trim() || '{}');
+          fontRegisteredCount = Number(notifyData.added) || 0;
+          fontBroadcastOk = fontRegisteredCount > 0 && Boolean(notifyData.notified);
+        }
+      } finally {
+        try {
+          if (fs.existsSync(listTmp)) fs.unlinkSync(listTmp);
+        } catch {}
+      }
+    } catch {}
+  } else if (process.platform === 'linux') {
     try {
       execSync('fc-cache -f 2>/dev/null || true');
     } catch {}
   }
-  console.log(JSON.stringify({ ok: true, platform: process.platform, destDir, installedCount: installed.length, installed }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        platform: process.platform,
+        destDir,
+        installedCount: installed.length,
+        fontRegisteredCount,
+        fontBroadcastOk,
+        installed
+      },
+      null,
+      2
+    )
+  );
 }
 
 async function runUninstall() {
   const home = os.homedir();
+  const targetDir = path.resolve(getArg('--target-dir', resolveDefaultTargetDir()));
+  if (isCustomSandboxTarget(targetDir)) {
+    const localVbs = path.join(targetDir, 'AntigravityThemeDaemon.vbs');
+    try {
+      if (fs.existsSync(localVbs)) fs.unlinkSync(localVbs);
+    } catch {}
+    console.log(`[Uninstall] Cleaned custom sandbox target (${targetDir}); global daemon and services were left untouched.`);
+    return;
+  }
   stopRunningDaemonProcesses();
   if (process.platform === 'darwin') {
     const uid = process.getuid ? process.getuid() : 501;
@@ -965,6 +1246,11 @@ switch (subcommand) {
     console.log('Built core/manifest.json:', m.version, 'files:', Object.keys(m.files).length);
     break;
   }
+  case 'pack': {
+    const packed = buildDistZip(__dirname);
+    console.log('Packed & verified dist archive:', packed.zipPath, `(verified ${packed.filesVerified} core files)`);
+    break;
+  }
   case 'doctor':
     await runDoctor();
     break;
@@ -985,12 +1271,13 @@ switch (subcommand) {
     break;
   default:
     console.log(`Usage:
-  node install.mjs install       [--channel auto|stable|insiders] [--preset high-contrast] [--scheme auto|light|dark]
+  node install.mjs install       [--channel auto|stable|insiders] [--preset high-contrast] [--scheme auto|light|dark] [--sync-user] [--target-dir <dir>] [--register-service]
   node install.mjs install-fonts --from <font-folder-path>
-  node install.mjs doctor        [--channel auto|stable|insiders]
-  node install.mjs verify        [--safe-mode] [--channel auto|stable|insiders]
-  node install.mjs rollback
-  node install.mjs uninstall
-  node install.mjs build-manifest`);
+  node install.mjs doctor        [--channel auto|stable|insiders] [--target-dir <dir>]
+  node install.mjs verify        [--safe-mode] [--channel auto|stable|insiders] [--target-dir <dir>]
+  node install.mjs rollback      [--target-dir <dir>]
+  node install.mjs uninstall     [--target-dir <dir>]
+  node install.mjs build-manifest
+  node install.mjs pack`);
     break;
 }

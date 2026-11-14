@@ -169,8 +169,9 @@ const DICT = Object.assign(Object.create(null), boot.i18nDict || {});
 
 - 不要添加 `toString`、`valueOf`、`constructor`、`__proto__` 这类会撞原型的键。空原型对象让普通键安全，但不要依赖原型方法，查找结果必须 `typeof replacement === 'string'`。
 - 键用界面上真实出现的英文，含大小写。句尾多一个 `.` 时，运行时会回退到不带点的键，并把中文句号补上。
-- 带数字的句子用 `runtime.js` 里已有的模块级正则（`RE_FILES_CHANGED`、`RE_WORKED_FOR` 等），不要每条词条各编译一个 `new RegExp`。
-- 不翻译 `selectors.excludeI18n` 盖住的节点：`code, pre, kbd, samp, textarea, input`、对话正文、文件标题、侧栏会话行、指标胶囊自身。默认串在 `user/config.json`。
+- 带数字的句子用 `runtime.js` 里已有的模块级正则（`RE_FILES_CHANGED`、`RE_WORKED_FOR` 等），不要每条词条各编译一个 `new RegExp`。新增模板追加在对应首字母桶里、已有判断之后。`RE_WORKED_FOR_UPDATES` 例外，放在 `RE_WORKED_FOR` 之前。不要改已有正则的字面量。不要加 `DICT_CI` 这类大小写不敏感索引。
+- 弯引号只在精确键未命中之后折成 `'` 再查一次。先折叠会让直引号键失去优先权。
+- 不翻译 `selectors.excludeI18n` 盖住的节点：`code, pre, kbd, samp, textarea, input`、对话正文、文件标题、侧栏会话行、指标胶囊自身。默认串在 `user/config.json`。追加排除项时，运行时默认值和仓库模板的 `selectors` 一起改。分支药丸继续限定在输入框内，因为 `branchPillInBox` 也决定页面类型。
 
 覆盖层是 `user/i18n.override.json`。扁平对象或 `{ "exact": { ... } }` 都可以。`normalizeOverrideDict()` 会丢掉 `_` 开头的键（所以 `_comment` 可以留），非字符串值也会丢掉。下划线键不会进入词典。
 

@@ -114,6 +114,52 @@ Agent 面板是本机 `http:`/`https:` iframe，查询串有 `extensionView=true
 
 `auto` 忽略配置里的单目标字段，只走 Stable 与 Insiders 的默认路径。只有命令行 `--port-file` 收成一个端点。
 
+## Scenario: 上游新增旗标不改变默认安装
+
+### 1. Scope / Trigger
+
+从上游搬安装器能力时，只加默认关闭的路径。不带新旗标的 `install` 仍写 `~/.antigravity/argv.json`、包装脚本，并走现有 Windows VBS + `HKCU\...\Run`。
+
+### 2. Signatures
+
+- `node install.mjs install [--sync-user] [--target-dir <dir>] [--register-service]`
+- `node install.mjs pack`
+- `rollback` 只接受同时含 `daemon.mjs` 与 `runtime.js` 的备份，并跳过名字以 `-user` 结尾的目录。
+- Windows `install-fonts` 在复制和注册表写入之后广播 `AddFontResource`。广播失败不把 `ok` 改成 `false`。
+
+### 3. Contracts
+
+- 不带 `--sync-user` 时，`user/` 仍是目标没有该文件才复制。`--sync-user` 先把整个 `user/` 拷到 `backups/<timestamp>-user/`，再覆盖 `config.json`、`custom.css`、`i18n.override.json`、`custom.js`，不删用户多出来的文件。
+- `--target-dir` 指向默认安装目录以外、且没有 `--register-service` 时，`install` / `doctor` / `verify` / `rollback` / `uninstall` 不改 argv、不注册自启、不停本机守护进程。
+- `isCustomSandboxTarget()` 用 `path.join(os.homedir(), '.gemini', 'antigravity', 'theme-patch')` 作默认目录，不用仓库目录冒充默认安装位置。
+- `buildManifest()` 继续写 `version: '5.0.0'`。
+
+### 4. Validation & Error Matrix
+
+- 备份目录缺 `daemon.mjs` 或 `runtime.js` → `rollback` 不用它，继续找下一个合法备份；一个都没有则 `[ERROR]` 并退出。
+- `AddFontResource` 或 PowerShell 失败 → `fontBroadcastOk: false`，`ok` 仍为 `true`，已复制路径仍在 `installed`。
+- PowerShell 5.1 的 `ConvertFrom-Json` 可能把 JSON 数组包成一层外层数组。枚举前用 `foreach` 摊平。
+
+### 5. Good/Base/Bad Cases
+
+- Good：默认 `install` 仍调用 `ensureArgvRemoteDebugging` 和 `registerSystemService`。
+- Base：自定义 `--target-dir` 只复制文件，JSON 里 `argvStatus.reason` 为 `custom-target-dir`。
+- Bad：schtasks 注册成功后删除 Startup VBS 和 `HKCU\...\Run`。那会换掉本机现在的自启。
+
+### 6. Tests Required
+
+仓库没有单测。`node --check install.mjs`。`node install.mjs doctor --target-dir <仓库根>` 应 `coreIntegrity.clean: true`，且 `liveWindow.reason` 为 `custom-target-dir`。不要对真实 `~/.gemini/antigravity/theme-patch` 跑 `install --sync-user` 来验收。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+把 Windows 自启改成 schtasks 优先，或把默认 `user/` 复制收成四文件白名单。
+
+#### Correct
+
+VBS + Run 保持唯一默认自启。白名单覆盖只出现在 `--sync-user` 分支。
+
 ## 反模式
 
 - 用 `npm install`、ts-node、esbuild 或再包一层守护脚本来「修安装」。

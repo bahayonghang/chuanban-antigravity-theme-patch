@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/node/index.md", "reason": "Node 层开工检查单：install.mjs 与 manifest 的改动边界"}
+{"file": ".trellis/spec/node/boundaries.md", "reason": "user/ 不覆盖、core.prev 不冲掉、禁止 IDE 端口、build-manifest 版本约定"}
+{"file": ".trellis/spec/node/cli-and-daemon.md", "reason": "子命令形状、VBS 自启、经典版双通道、不注入 IDE"}
+{"file": ".trellis/spec/node/quality.md", "reason": "改内核后的 build-manifest 与 doctor 顺序"}
+{"file": ".trellis/spec/inject/index.md", "reason": "注入层开工检查单：词典、排除选择器和运行时"}
+{"file": ".trellis/spec/inject/runtime.md", "reason": "boot 占位符、Agent 面板门闩、i18n 缺省 false、scheme 与字体 id"}
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "扁平词典、精确匹配、动态正则和 excludeI18n"}
+{"file": ".trellis/spec/inject/user-layer.md", "reason": "仓库 user/config.json 的 selectors 会覆盖运行时默认值"}
+{"file": ".trellis/spec/inject/quality.md", "reason": "注入体语法、iframe 门闩和 manifest 重建"}
+{"file": ".trellis/tasks/11-14-merge-upstream-additions/research/upstream-additions.md", "reason": "上游片段行号、可追加正则名单，以及禁止整支合并的结论"}

@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/node/quality.md", "reason": "doctor 与 manifest 哈希是 Node 侧完成标准"}
+{"file": ".trellis/spec/node/cli-and-daemon.md", "reason": "验收时核对 Windows 自启仍是 VBS，且没有 IDE 端口"}
+{"file": ".trellis/spec/node/boundaries.md", "reason": "验收时核对默认安装仍不覆盖 user/，且未手改哈希"}
+{"file": ".trellis/spec/inject/quality.md", "reason": "验收 iframe 门闩、boot 占位符和排除选择器"}
+{"file": ".trellis/spec/inject/runtime.md", "reason": "验收 scheme、字体目录和 i18n 缺省没有被上游替换"}
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "验收词典形状和已有动态译文没有被改写"}
+{"file": ".trellis/tasks/11-14-merge-upstream-additions/prd.md", "reason": "AC1–AC7 是这次合并的完成标准"}
+{"file": ".trellis/tasks/11-14-merge-upstream-additions/research/upstream-additions.md", "reason": "对照上游行号检查搬入块没有带上 schtasks、Swarm 或 DICT_CI"}

@@ -96,6 +96,14 @@ node install.mjs install --channel stable
 4. 自动检查并修补 `~/.antigravity/argv.json` 与 `~/.antigravity-insiders/argv.json`（注入 `"remote-debugging-port": 9222`）。不要探测 Antigravity IDE，也不要写 `~/.antigravity-ide/argv.json`；
 5. 自动生成 `~/.gemini/antigravity/scripts/antigravity-font-daemon.mjs` 兼容包装入口，并注册/更新系统后台自启服务（macOS `LaunchAgent` / Linux `systemd --user` / Windows Startup VBS）。
 
+上面的默认 `install` 路径不变。另外几个旗标默认关闭：
+
+- `--sync-user`：先把已有 `user/` 备份到 `backups/<时间戳>-user/`，再覆盖 `config.json`、`custom.css`、`i18n.override.json`、`custom.js`。不带此旗标时，已有 `user/` 文件仍然不覆盖。
+- `--target-dir <dir>` 不是默认安装目录，且没有 `--register-service` 时，只复制文件，不改 `argv.json`、不写包装脚本、不注册自启，也不对本机正在运行的服务执行 `--once`。同一条件下 `doctor` / `verify` / `rollback` / `uninstall` 也不停、不改本机服务。需要恢复全局注册时加上 `--register-service`。
+- `rollback` 只采用同时包含 `daemon.mjs` 与 `runtime.js` 的备份，并跳过名字以 `-user` 结尾的目录。
+- `node install.mjs pack` 生成发行 zip。
+- Windows 上 `install-fonts` 在复制文件并写入注册表之后广播 `AddFontResource`。广播失败不改变 `ok: true`。
+
 ### Step 3：CDP 实机注入验收
 确保 Antigravity 客户端正在运行，执行实机验证：
 ```bash
@@ -176,6 +184,7 @@ node install.mjs rollback
      ```bash
      node install.mjs install-fonts --from "C:\path\to\extracted-fonts"
      ```
+   - 复制和当前用户字体注册表写入之后，会再广播一次 `AddFontResource`。这一步失败只影响新增的广播字段，已经复制的字体仍然算安装成功。
 2. **首次开启 CDP 端口 (`9222`) 后的客户端重启**：
    - `node install.mjs install` 会自动在 `%USERPROFILE%\.antigravity\argv.json` 与 Insiders 对应文件中注入 `"remote-debugging-port": 9222`。不要给 `%USERPROFILE%\.antigravity-ide\argv.json` 写入调试端口，也不要用 `--remote-debugging-port=9222` 启动 `Antigravity IDE.exe`。
    - Antigravity IDE 显示 `Invalid Extensions detected` 时，先看 `%USERPROFILE%\.antigravity-ide\extensions\<id>\package.json` 是否存在。缺失是目录被删，不是 CSS。不要删除或重写扩展目录，也不要改 IDE 安装目录。
