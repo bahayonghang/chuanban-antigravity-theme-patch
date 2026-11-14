@@ -135,7 +135,7 @@ node install.mjs verify
   }
 }
 ```
-- **`preset`**：支持 `"high-contrast"`（默认高对比暖白）、`"claude-desktop-purewhite"`（ClaudeDesktop 净白）、`"vintage-deep"`（复古深色羊皮纸），修改保存后 2.5 秒内自动热切换。三套都是亮色，不要把 `vintage-deep` 改成暗色。
+- **`preset`**：支持 `"high-contrast"`（默认高对比暖白）、`"claude-desktop-purewhite"`（ClaudeDesktop 净白）、`"vintage-deep"`（复古深色羊皮纸），修改保存后 2.5 秒内自动热切换。三套都是亮色，不要把 `vintage-deep` 改成暗色。**仅对客户端默认外观（`Default Light` / `Default Dark`）生效**：当用户在 Settings → Appearance 切换到非默认主题（如 `Everforest`、`Dracula`、`Catppuccin`、`Legacy Dark` 或自定义拾色）时，补丁会 0ms 自动置 `<html data-ag-appearance="custom">` 并移除 `data-ag-preset`，100% 让出全部主题色彩与蜡封样式，同时继续保留自定义字体、自适应主题配色的实时指标胶囊、汉化与路由修复等非配色增强模块；切回 `Default Light` / `Default Dark` 即刻恢复全壳层（顶栏 + 左栏 + 顶部 Tab/分栏栏 + 内嵌卡片）船板暖色皮肤。
 - **`scheme`**：只允许 `"auto"`、`"light"`、`"dark"`。`auto` 跟随 Agent 面板 URL 的 `hostTheme`，没有这个参数时再看 `theme-dark` / `theme-light` 和 `localStorage` 的 `theme-mode`，最后回退亮色。`light` 或 `dark` 强制该模式，约 2.5 秒热切换。Agents 整窗跟随 `theme-dark` / `theme-light` 类变化，不必为此重载窗口。切换主题后，若面板 URL 里的 `hostTheme` 没变，重载 Agent 面板即可；不要为此另写消息通道。`channel=auto` 只探测 Stable 与 Insiders，不探测 Antigravity IDE，不连 `%APPDATA%/Antigravity IDE/DevToolsActivePort`，不写 `~/.antigravity-ide/argv.json`。
 - **`fonts`**：`ui` 只允许 `wenyuan-serif`（默认，家族名 `WenYuan Serif SC`）、`wenyuan-sans`、`anthropic`、`system`。`code` 只允许 `maple-bright`（默认，家族名 `MapleBright`）、`maple-mono`、`anthropic`、`sarasa`。缺字段、空字符串或其他值分别回到这两个默认 id，安装不会因此失败。外观字体覆盖界面控件和对话正文；代码字体覆盖代码、终端、文件名和输入框。Antigravity 原生字体下拉（System UI / Inter / Google Sans）不控制补丁字体。
 - **`modules`（亦兼容别名 `features`，其中 `metrics` 兼容别名 `metricsCapsule`）**：支持单独开关任意子模块。`i18n` 默认 `false`。若将顶层 `"enabled": false` 保存，页面将在 2.5 秒内无损卸载全部样式并将已汉化的界面文字还原为英文原貌。

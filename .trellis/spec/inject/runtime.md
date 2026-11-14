@@ -42,7 +42,7 @@ Artifact / HTML 预览之类的子 iframe 不注入。唯一例外是本机 Agen
 - `metricsCapsule` 只有在没写 `metrics` 时才当作 `metrics`。
 - 运行时再把 `MODULES.metricsCapsule` 设成 `MODULES.metrics`，旧调用点还能读到。
 
-关整个补丁是 `enabled: false`，不是把每个模块都关掉。那条路径会删掉 `#ag-custom-fonts`、`#antigravity-user-custom-style`、`#ag-live-metrics-pill`、`#ag-live-metrics-tooltip`，断开 observer / interval，清掉 `data-ag-preset`、`data-ag-scheme`、`data-ag-page-type`、`data-ag-wax-seal`、`data-ag-font-ui`、`data-ag-font-code`，并用 WeakMap 把译文还原。
+关整个补丁是 `enabled: false`，不是把每个模块都关掉。那条路径会删掉 `#ag-custom-fonts`、`#antigravity-user-custom-style`、`#ag-live-metrics-pill`、`#ag-live-metrics-tooltip`，断开 observer / interval 并清空 `window.__ag_ns_on_patch_fn`，清掉 `data-ag-preset`、`data-ag-appearance`、`data-ag-scheme`、`data-ag-page-type`、`data-ag-wax-seal`、`data-ag-font-ui`、`data-ag-font-code`，并用 WeakMap 把译文还原。
 
 ## 页面上的状态
 
@@ -52,12 +52,14 @@ Artifact / HTML 预览之类的子 iframe 不注入。唯一例外是本机 Agen
 |------|------|
 | `window.__ag_orig_text_map` | WeakMap，原文与上次写入值 |
 | `window.__ag_applied_theme_vars` | 上一轮写过的 CSS 变量名，用来删掉已移除的键 |
+| `window.__ag_applied_theme_var_values` | 记录补丁写入的精确行内变量值；移除时先比对当前值，绝不误删已被宿主 `YZ` 覆写的同名主题变量 |
 | `window.__ag_i18n_observer` | 汉化 MutationObserver，重建前先 `disconnect` |
 | `window.__ag_metrics_route_watcher` | 指标路由 `setInterval`，重建前先 `clearInterval` |
 | `window.__ag_last_metrics` | 最近一次指标 |
-| `window.__AG_PATCH_CTX__` | 交给 `custom.js` 的 `ctx` / `boot` |
-| `window.__ag_scheme_observer` | 监听 `documentElement` 与 `body` 的 `class`，变化时只调用 `syncChuanbanScheme`。重建前先 `disconnect` |
+| `window.__AG_PATCH_CTX__` | 交给 `custom.js` 的 `ctx` / `boot`（含 `appearance` 只读 getter） |
+| `window.__ag_scheme_observer` | 监听 `documentElement` 的 `class`、`style` 与 `body` 的 `class`、`data-agy-theme`、`data-agy-home-glow`，变化时同步外观与预设。重建前先 `disconnect` |
 | `window.__ag_scheme_body_wait` | `body` 尚未出现时的一次性 `childList` 等待。出现后必须 `disconnect` 并清空，不能留成第二个长期 observer |
+| `window.__ag_ns_hook_installed` / `window.__ag_ns_presets` / `window.__ag_ns_on_patch_fn` | 单实例包装 `window.nativeStorage`（`getItems` / `updateItems` / `onChanged`），跟踪 `theme-preset-light` 与 `theme-preset-dark` |
 
 新的长期句柄沿用 `__ag_` 前缀，并在重新注入时先清掉旧的 observer / timer。漏清就会叠多个 observer。
 
@@ -67,9 +69,13 @@ Artifact / HTML 预览之类的子 iframe 不注入。唯一例外是本机 Agen
 
 现有熔断是单帧约 200 个节点，加上 `requestAnimationFrame` 与 80ms `setTimeout` 双触发，避免后台标签里脏根无限堆积。新扫描逻辑沿这个预算，不要对整棵 `document.body` 做无节流的全量 walk。
 
-主题变量经 `applyThemeVars` 写到 `document.documentElement.style`。空字符串会删掉该属性。`--ag-chat-font-size` 还会切换 `data-ag-custom-font-size`。
+主题变量经 `applyThemeVars(varsObj, allowColorVars)` 写到 `document.documentElement.style`。非默认外观（`data-ag-appearance="custom"`）下 `allowColorVars = false`，仅保留 `--ag-chat-font-size` 等非颜色变量，并清理补丁自己写过的颜色行内变量。写入/清理 `root.style` 后同步 `window.__ag_scheme_observer.takeRecords()` 排空自身变更，杜绝 `style` 观察自触发死循环。`--ag-chat-font-size` 还会切换 `data-ag-custom-font-size`。
 
-`scheme=auto` 不能只在注入时和 `localStorage.setItem` 时判定。Agents 整窗改的是 `body` 的 `theme-dark` / `theme-light`，不写 `theme-mode`。`Page.addScriptToEvaluateOnNewDocument` 可能早于类名。用独立的 `window.__ag_scheme_observer` 看 `documentElement` 和 `body` 的 `class`，回调只调用 `syncChuanbanScheme()`。`body` 还不在时，用可断开的一次性 `childList` 等到它出现，再观察它的 `class` 并立刻再同步一次。不要把汉化 observer 扩成监听 `class` 或 `style`。不要轮询。配置里的 `light` / `dark` 仍由 `resolveAgScheme()` 开头短路，observer 不能绕过。`enabled: false` 必须先断开这两个句柄，再删 `data-ag-scheme`。
+`isDefaultAppearance(hostScheme)` 只在客户端处于原生默认外观（`Default Light` / `Default Dark` 且未手改三原色种子 `--background` / `--foreground` / `--primary`，同时排除 `Legacy Light` / `Legacy Dark` 无 `data-agy-home-glow` 状态）时返回 `true`：
+- 默认外观下设置 `data-ag-appearance="default"` 并挂载 `data-ag-preset`；
+- 非默认外观（如 `Everforest`、`Dracula`、`Catppuccin`、`Legacy Dark` 或自定义拾色）下 0ms 切换为 `data-ag-appearance="custom"` 并移除 `data-ag-preset`，彻底让出全部主题色彩与蜡封覆盖，同时保留字体、自适应配色的实时指标胶囊、汉化与死锁修复等非颜色增强模块。
+
+`scheme=auto` 不能只在注入时和 `localStorage.setItem` 时判定。Agents 整窗改的是 `body` 的 `theme-dark` / `theme-light`、`data-agy-theme`、`data-agy-home-glow` 以及 `html.style` 的主题种子变量，不写 `theme-mode`。`Page.addScriptToEvaluateOnNewDocument` 可能早于类名。用独立的 `window.__ag_scheme_observer` 看 `documentElement`（`class`、`style`）和 `body`（`class`、`data-agy-theme`、`data-agy-home-glow`），回调调用 `syncChuanbanPreset()`。`body` 还不在时，用可断开的一次性 `childList` 等到它出现，再观察它的属性并立刻再同步一次。不要把汉化 observer 扩成监听 `class` 或 `style`。不要轮询。配置里的 `light` / `dark` 仍由 `resolveAgScheme()` 开头短路，observer 不能绕过。`enabled: false` 必须先断开这两个句柄，再删 `data-ag-scheme` 与 `data-ag-appearance`。
 
 ## 用户脚本沙箱
 

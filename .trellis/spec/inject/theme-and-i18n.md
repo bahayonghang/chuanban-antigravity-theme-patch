@@ -71,7 +71,11 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 
 ## 预设与蜡封
 
-预设写在 `<html data-ag-preset>` 上。合法用户配置值只有三个：
+预设写在 `<html data-ag-preset>` 上，并由 `<html data-ag-appearance="default|custom">` 控制是否挂载：仅当宿主处于默认外观（`Default Light` / `Default Dark`）时才设置 `data-ag-preset`；一旦用户在 Settings → Appearance 切换到非默认主题（如 `Everforest`、`Dracula`、`Catppuccin`、`Legacy Light/Dark` 或自定义三原色），运行时即刻置 `data-ag-appearance="custom"` 并移除 `data-ag-preset`。
+
+**色彩门控铁律**：`core/theme.css` 中所有涉及主题表面色、边框色、阴影色、输入框蜡封、发送按钮陶土橙、侧边栏/菜单/弹窗墨色的规则，必须全部限定在 `html[data-ag-preset]`（或指定预设选择器）之下，严禁写无门控的全局颜色覆盖。非默认外观下保留全局字体、`--ag-chat-font-size`、汉化，以及通过 `html:not([data-ag-preset])` / `html:not([data-ag-preset])[data-ag-scheme="dark"]` 自适应宿主 `--foreground` / `--primary` / `--background` / `--border` 的实时指标胶囊。
+
+合法用户配置值只有三个：
 
 - `high-contrast`（样式里同时认历史别名 `chuanban-warm-white`）
 - `claude-desktop-purewhite`（同时认 `claude-desktop-official`）
@@ -79,7 +83,7 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 
 新预设要同时加：`runtime.js` 里的预设同步、`theme.css` 里带旧别名的选择器、以及 `user/custom.js` 头注释里的联合类型。不要只改其中一处。
 
-明暗不是第四个预设。`scheme` 写到 `data-ag-scheme`，只允许 `auto`、`light`、`dark`。暗色是三套亮色预设之后的 `html[data-ag-scheme="dark"]` 令牌，选择器要压过 `body.theme-light`，并且变量带 `!important`。不要改 `vintage-deep` 的浅色色值，也不要复制一整份暗色选择器。
+明暗不是第四个预设。`scheme` 写到 `data-ag-scheme`，只允许 `auto`、`light`、`dark`。默认外观暗色是三套亮色预设之后的 `html[data-ag-preset][data-ag-scheme="dark"]` 令牌，选择器要压过 `body.theme-light`，并且变量带 `!important`。不要改 `vintage-deep` 的浅色色值，也不要复制一整份暗色选择器。
 
 蜡封三态是纯 CSS，不靠 JS 轮询：
 
@@ -121,7 +125,9 @@ Windows 上字体光复制到用户字体目录不够，要走 `node install.mjs
 
 暗色表面令牌：页面 `#1C1917`，侧栏 `#24201C`，输入框外层 `#2A231E`，内卡 `#1F1B18`，正文 `#F4EFE6`，侧栏字 `#E7E0D6`，蜡封 `#C46A58`。发送按钮保持 `#D97757` / `#FFFFFF`。
 
-经典版整窗的可见底色在 `.agy-shell`、`.agy-sheet`、`.bg-background`、`.bg-sidebar` 上，不在 `body`。`.agy-sheet` 还有一层冷蓝径向渐变，暗色时要换成暖色，否则主区仍像原生主题。
+经典版 NewUX（`data-newux-theme="onyx"`）整窗由「外层暖色画布框架 + 内嵌圆角内容卡片」组成：
+- 外层统一外壳：顶部菜单栏、左侧边栏与顶部 40px 标题/分栏/Tab 工具栏通过 `--sidebar`、`--shell`、`--shell-canvas` 及 `:is(.agy-shell, .agy-inset-shell, .bg-sidebar)` 同色铺底；`.agy-sheet[data-sheet-inset]` 本身保持透明（去除冷蓝渐变），让顶部 `[data-main-content-header]` 直接落在外壳画布上，避免左栏与主区顶栏出现色差断层。
+- 内嵌内容卡片：`[data-main-content-body]`、`[data-side-panel-body]` 与 `.agy-sheet:not([data-sheet-inset])` 承接 `--background`（暗色叠加暖陶土微光径向渐变），并配合 `--onyx-frame`、`--onyx-well`、`--onyx-raised`、`--onyx-selected`、`--onyx-key`、`--glass`、`--glass-border` 与 `.agy-aux-tab` 完成全壳层、分段控件、标签胶囊与弹窗表面统一。
 
 ### 4. Validation & Error Matrix
 

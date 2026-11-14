@@ -68,7 +68,7 @@ node install.mjs build-manifest
 - 部署和改装先读 `SKILL.md`，再调用现成的 `install.mjs`。
 - 用户的配色、字号、词条、追加 CSS、前端钩子只写已安装目录的 `user/config.json`、`user/custom.css`、`user/i18n.override.json`、`user/custom.js`。
 - `custom.css` 写原生 CSS，不要做反斜杠转义。`i18n.override.json` 用扁平 `"英文原文": "中文"`，或包在 `"exact"` 里。
-- 预设只用 `"high-contrast"`、`"claude-desktop-purewhite"`、`"vintage-deep"`。`scheme` 只允许 `auto`、`light`、`dark`。`modules` 可别名 `features`，`metrics` 可别名 `metricsCapsule`。
+- 预设只用 `"high-contrast"`、`"claude-desktop-purewhite"`、`"vintage-deep"`，且色彩预设仅在宿主默认外观（`Default Light` / `Default Dark`，`<html data-ag-appearance="default">`）下挂载 `data-ag-preset`；非默认主题下（`<html data-ag-appearance="custom">`）让出全部主题色彩并保留非配色模块。`scheme` 只允许 `auto`、`light`、`dark`。`modules` 可别名 `features`，`metrics` 可别名 `metricsCapsule`。
 - `fonts.ui` 只允许 `wenyuan-serif`、`wenyuan-sans`、`anthropic`、`system`，默认 `wenyuan-serif`。`fonts.code` 只允许 `maple-bright`、`maple-mono`、`anthropic`、`sarasa`，默认 `maple-bright`。原生字体下拉不控制补丁字体。
 - `modules.i18n` 默认关闭。安装时保留已有的 `true` / `false`。
 - 关闭整套补丁时把已安装 `user/config.json` 的 `"enabled"` 设为 `false`，不要去删客户端文件。
