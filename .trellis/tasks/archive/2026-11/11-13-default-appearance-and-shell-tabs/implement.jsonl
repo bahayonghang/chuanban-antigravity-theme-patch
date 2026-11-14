@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/inject/runtime.md", "reason": "Browser runtime injection invariants, observer cleanup, and DOM attribute contracts"}
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "Theme CSS scoping, preset/scheme token contracts, and wax-seal/metrics styling rules"}
+{"file": ".trellis/spec/inject/user-layer.md", "reason": "User layer themeVars, custom.css, and non-destructive upgrade contracts"}
+{"file": ".trellis/spec/node/boundaries.md", "reason": "CLI manifest hashing, CDP origin boundaries, and non-intrusive client rules"}
+{"file": ".trellis/tasks/11-13-default-appearance-and-shell-tabs/research/appearance-and-shell-analysis.md", "reason": "Live CDP DOM hierarchy and main.js onyx/nativeStorage reverse-engineering evidence"}
