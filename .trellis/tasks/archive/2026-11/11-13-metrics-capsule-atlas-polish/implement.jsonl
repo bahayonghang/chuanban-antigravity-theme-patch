@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/node/index.md", "reason": "Node 守护进程开发前检查单与质量门禁"}
+{"file": ".trellis/spec/node/cli-and-daemon.md", "reason": "core/daemon.mjs SQLite 只读解析、降级策略与 CDP 注入契约"}
+{"file": ".trellis/spec/node/boundaries.md", "reason": "core/ 修改边界、build-manifest 要求与 user/ 无损保留规则"}
+{"file": ".trellis/spec/inject/index.md", "reason": "注入层开发前检查单与质量门禁"}
+{"file": ".trellis/spec/inject/runtime.md", "reason": "core/runtime.js boot 载荷、全局状态与卸载还原契约"}
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "core/theme.css 明暗双态令牌、选择器优先级与不翻译节点规则"}
+{"file": "DESIGN.md", "reason": "项目根设计契约与 Anti-slop 声明"}
+{"file": ".trellis/tasks/11-13-metrics-capsule-atlas-polish/research/context-window-and-protobuf.md", "reason": "gen_metadata Protobuf 字段映射与跨模型压缩阈值实证"}
+{"file": ".trellis/tasks/11-13-metrics-capsule-atlas-polish/research/design-atlas-capsule-audit.md", "reason": "design-atlas 八维审计结论与 theme.css:417 特异性问题定位"}

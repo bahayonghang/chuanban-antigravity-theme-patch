@@ -1,0 +1,104 @@
+# 注入运行时
+
+`core/runtime.js` 整个文件是一个箭头函数，最后一行是：
+
+```js
+})(__AG_BOOT_PAYLOAD__);
+```
+
+`core/daemon.mjs` 的 `rebuildBundleIfNeeded()` 用字符串替换把这一行换成 `})(${JSON.stringify(bootPayload)});`。所以：
+
+- 占位符必须原样留在文件最后。不要改成别的变量名，除非同时改守护进程里的 `replace`。
+- 不要在这个文件里写需要再转义一遍的模板字符串来嵌 CSS 或词典。CSS 文本、词典、`custom.js` 源码都放在 boot 对象里。
+- 替换回调是 `() => ...`，避免 `replace` 把 JSON 里的 `$&` 当模式处理。保持这个形态。
+
+## 谁可以被注入
+
+函数体第一件事是判断当前窗口要不要注入：
+
+```js
+if (window.top !== window && !isAgentPanelWindow()) return;
+if (!boot || typeof boot !== 'object') return;
+```
+
+Artifact / HTML 预览之类的子 iframe 不注入。唯一例外是本机 Agent 面板：协议为 `http:` 或 `https:`，主机是 `127.0.0.1` 或 `localhost`，并且查询串有 `extensionView=true` 或 `hostTheme`。不要放行其余 iframe，也不要删掉这个判断。
+
+## boot 与模块开关
+
+守护进程放进 boot 的字段包括 `version`、`platform`、`enabled`、`preset`、`scheme`、`fonts`、`cssText`、`customCss`、`themeVars`、`i18nDict`、`modules`、`features`（与 `modules` 同一对象）、`selectors`、`config`、`customJs`。`scheme` 只可能是 `auto`、`light`、`dark`。`fonts` 是 `{ ui, code }`，非法或缺省 id 在进 boot 前已换成默认值。`config.fonts` 与 `fonts` 相同。
+
+页面里模块默认值写在 `runtime.js` 的 `Object.assign`：
+
+- `i18n`：缺省 `false`。已安装配置里的布尔值覆盖这个缺省。
+- `metrics`
+- `composerWaxSeal`
+- `deadlockHealer`
+- `customCss`
+- `customJs`
+
+别名是既成事实，两边都要认：
+
+- 配置里的 `features` 与 `modules` 合并，`modules` 优先（后写覆盖）。
+- `metricsCapsule` 只有在没写 `metrics` 时才当作 `metrics`。
+- 运行时再把 `MODULES.metricsCapsule` 设成 `MODULES.metrics`，旧调用点还能读到。
+
+关整个补丁是 `enabled: false`，不是把每个模块都关掉。那条路径会删掉 `#ag-custom-fonts`、`#antigravity-user-custom-style`、`#ag-live-metrics-pill`、`#ag-live-metrics-tooltip`，断开 observer / interval 并清空 `window.__ag_ns_on_patch_fn`，清掉 `data-ag-preset`、`data-ag-appearance`、`data-ag-scheme`、`data-ag-page-type`、`data-ag-wax-seal`、`data-ag-font-ui`、`data-ag-font-code`，并用 WeakMap 把译文还原。
+
+## 页面上的状态
+
+持久状态挂在 `window` 上，热重载时复用，不要改成模块级 `let` 以外再复制一份：
+
+| 名字 | 用途 |
+|------|------|
+| `window.__ag_orig_text_map` | WeakMap，原文与上次写入值 |
+| `window.__ag_applied_theme_vars` | 上一轮写过的 CSS 变量名，用来删掉已移除的键 |
+| `window.__ag_applied_theme_var_values` | 记录补丁写入的精确行内变量值；移除时先比对当前值，绝不误删已被宿主 `YZ` 覆写的同名主题变量 |
+| `window.__ag_i18n_observer` | 汉化 MutationObserver，重建前先 `disconnect` |
+| `window.__ag_metrics_route_watcher` | 指标路由 `setInterval`，重建前先 `clearInterval` |
+| `window.__ag_last_metrics` | 最近一次指标 |
+| `window.__AG_PATCH_CTX__` | 交给 `custom.js` 的 `ctx` / `boot`（含 `appearance` 只读 getter） |
+| `window.__ag_scheme_observer` | 监听 `documentElement` 的 `class`、`style` 与 `body` 的 `class`、`data-agy-theme`、`data-agy-home-glow`，变化时同步外观与预设。重建前先 `disconnect` |
+| `window.__ag_scheme_body_wait` | `body` 尚未出现时的一次性 `childList` 等待。出现后必须 `disconnect` 并清空，不能留成第二个长期 observer |
+| `window.__ag_ns_hook_installed` / `window.__ag_ns_presets` / `window.__ag_ns_on_patch_fn` | 单实例包装 `window.nativeStorage`（`getItems` / `updateItems` / `onChanged`），跟踪 `theme-preset-light` 与 `theme-preset-dark` |
+
+新的长期句柄沿用 `__ag_` 前缀，并在重新注入时先清掉旧的 observer / timer。漏清就会叠多个 observer。
+
+## DOM 与性能约束
+
+汉化 observer 看 `childList`、`subtree`、`characterData`，属性只监听 `title`、`aria-label`、`placeholder`。不要改成监听 `style` 或全部属性。
+
+现有熔断是单帧约 200 个节点，加上 `requestAnimationFrame` 与 80ms `setTimeout` 双触发，避免后台标签里脏根无限堆积。新扫描逻辑沿这个预算，不要对整棵 `document.body` 做无节流的全量 walk。
+
+主题变量经 `applyThemeVars(varsObj, allowColorVars)` 写到 `document.documentElement.style`。非默认外观（`data-ag-appearance="custom"`）下 `allowColorVars = false`，仅保留 `--ag-chat-font-size` 等非颜色变量，并清理补丁自己写过的颜色行内变量。写入/清理 `root.style` 后同步 `window.__ag_scheme_observer.takeRecords()` 排空自身变更，杜绝 `style` 观察自触发死循环。`--ag-chat-font-size` 还会切换 `data-ag-custom-font-size`。
+
+`isDefaultAppearance(hostScheme)` 只在客户端处于原生默认外观（`Default Light` / `Default Dark` 且未手改三原色种子 `--background` / `--foreground` / `--primary`，同时排除 `Legacy Light` / `Legacy Dark` 无 `data-agy-home-glow` 状态）时返回 `true`：
+- 默认外观下设置 `data-ag-appearance="default"` 并挂载 `data-ag-preset`；
+- 非默认外观（如 `Everforest`、`Dracula`、`Catppuccin`、`Legacy Dark` 或自定义拾色）下 0ms 切换为 `data-ag-appearance="custom"` 并移除 `data-ag-preset`，彻底让出全部主题色彩与蜡封覆盖，同时保留字体、自适应配色的实时指标胶囊、汉化与死锁修复等非颜色增强模块。
+
+`scheme=auto` 不能只在注入时和 `localStorage.setItem` 时判定。Agents 整窗改的是 `body` 的 `theme-dark` / `theme-light`、`data-agy-theme`、`data-agy-home-glow` 以及 `html.style` 的主题种子变量，不写 `theme-mode`。`Page.addScriptToEvaluateOnNewDocument` 可能早于类名。用独立的 `window.__ag_scheme_observer` 看 `documentElement`（`class`、`style`）和 `body`（`class`、`data-agy-theme`、`data-agy-home-glow`），回调调用 `syncChuanbanPreset()`。`body` 还不在时，用可断开的一次性 `childList` 等到它出现，再观察它的属性并立刻再同步一次。不要把汉化 observer 扩成监听 `class` 或 `style`。不要轮询。配置里的 `light` / `dark` 仍由 `resolveAgScheme()` 开头短路，observer 不能绕过。`enabled: false` 必须先断开这两个句柄，再删 `data-ag-scheme` 与 `data-ag-appearance`。
+
+## 用户脚本沙箱
+
+`custom.js` 不是 `eval` 进内核作用域。运行时用：
+
+```js
+const fn = new Function('ctx', 'boot', boot.customJs);
+fn(window.__AG_PATCH_CTX__, window.__AG_PATCH_CTX__);
+```
+
+包在 `try/catch` 里，失败只 `console.error('[Antigravity Patch] Error in user/custom.js:', err)`。不要让用户脚本的异常中断内核后半段，也不要把它的错误吞掉不打印。
+
+`ctx` 上现有的字段：`version`、`preset`、`config`、`modules`、`features`、`themeVars`、`dict`、`metrics`（getter）、`syncPreset`、`ensureMetricsPill`。加字段可以，删或改名会破坏已经写好的 `user/custom.js`。
+
+## 反模式
+
+- 把 React、打包器或 npm 包引进 `runtime.js`。
+- 注入 Agent 面板以外的子 iframe，或在非顶层窗口改 `history`。
+- 用 `localStorage.theme-preset-light = ...` 直接赋值。现有代码走 `Storage.prototype.setItem/getItem.call`，并会把非法的 `theme-preset-light` 改回 `Default Light`，避免原生主题选择器白屏。
+- 热重载时不 `disconnect` 旧 observer 就 `new` 一个新的。
+- 只在注入时同步 `data-ag-scheme`，指望 `localStorage['theme-mode']`。Agents 不写这个键，类名后到就会停在 `light`，亮色墨盖在原生暗底上。
+
+## 参考
+
+- `core/runtime.js` 开头到 `applyThemeVars`，以及文件末尾 custom.js 段
+- `core/daemon.mjs` 的 `bootPayload` 与 `replace('})(__AG_BOOT_PAYLOAD__);'`

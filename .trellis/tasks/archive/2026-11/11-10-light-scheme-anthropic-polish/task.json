@@ -1,0 +1,31 @@
+{
+  "id": "light-scheme-anthropic-polish",
+  "name": "light-scheme-anthropic-polish",
+  "title": "明亮主题 Anthropic 质感优化",
+  "description": "对照 Claude Desktop 重新校准 Agents 界面明亮配色的层次、边框与强调色，暗色主题不动",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lyh",
+  "assignee": "lyh",
+  "createdAt": "2026-11-10",
+  "completedAt": "2026-11-10",
+  "branch": "dev",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "core/theme.css",
+    "core/manifest.json",
+    "DESIGN.md",
+    ".trellis/spec/inject/theme-and-i18n.md"
+  ],
+  "notes": "Implementation deployed and checks passed; user approved commit and archive. Receipt: research/integration-gates-20261110.md. Native persistent light-theme setting not changed.",
+  "meta": {}
+}

@@ -3,7 +3,7 @@
  * chuanban-antigravity-theme-patch · 一键安装、自检、安全模式验证与回滚 CLI (install.mjs)
  *
  * 支持子命令：
- *   node install.mjs install [--channel auto|stable|insiders] [--preset high-contrast] [--target-dir <dir>]
+ *   node install.mjs install [--channel auto|stable|insiders] [--preset high-contrast] [--scheme auto|light|dark] [--target-dir <dir>]
  *   node install.mjs doctor  [--channel auto|stable|insiders] [--target-dir <dir>]
  *   node install.mjs verify  [--safe-mode] [--channel auto|stable|insiders] [--target-dir <dir>]
  *   node install.mjs rollback [--target-dir <dir>]
@@ -182,6 +182,10 @@ async function detectEnvironment(channel = 'auto') {
   const primaryChannel = channel === 'insiders' ? 'insiders' : 'stable';
   const chInfo = checkSingleChannel(primaryChannel);
   const insidersInfo = checkSingleChannel('insiders');
+  const channels = {
+    stable: checkSingleChannel('stable'),
+    insiders: insidersInfo
+  };
 
   return {
     nodeVer,
@@ -198,17 +202,19 @@ async function detectEnvironment(channel = 'auto') {
     hasSarasaFont,
     channel,
     appExists: chInfo.appExists || insidersInfo.appExists,
-    portFile: chInfo.portFileExists ? chInfo.portFile : insidersInfo.portFileExists ? insidersInfo.portFile : chInfo.portFile,
+    portFile: chInfo.portFileExists
+      ? chInfo.portFile
+      : insidersInfo.portFileExists
+        ? insidersInfo.portFile
+        : chInfo.portFile,
     portFileExists: chInfo.portFileExists || insidersInfo.portFileExists,
-    channels: {
-      stable: checkSingleChannel('stable'),
-      insiders: insidersInfo
-    }
+    channels
   };
 }
 
 function ensureArgvRemoteDebugging(channel = 'auto') {
   const home = os.homedir();
+  // 只修补经典版。不要探测 Antigravity IDE，不要写入 ~/.antigravity-ide/argv.json。
   const dirs =
     channel === 'insiders'
       ? ['.antigravity-insiders']
@@ -252,6 +258,27 @@ function isAllowedOrigin(urlStr) {
   return ALLOWED_ORIGINS.some((prefix) => urlStr.startsWith(prefix));
 }
 
+function isAgentPanelUrl(urlStr) {
+  try {
+    const url = new URL(urlStr);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return false;
+    return url.searchParams.get('extensionView') === 'true' || url.searchParams.has('hostTheme');
+  } catch {
+    return false;
+  }
+}
+
+function isInjectableTarget(target) {
+  if (!target || !target.webSocketDebuggerUrl) return false;
+  const url = String(target.url || '');
+  if (url.startsWith('devtools://')) return false;
+  if (!isAllowedOrigin(url)) return false;
+  if (String(target.title || '').includes('Launchpad')) return false;
+  if (target.type === 'page') return true;
+  return target.type === 'iframe' && isAgentPanelUrl(url);
+}
+
 function fetchTargetsFromPort(port) {
   return new Promise((resolve) => {
     const req = http.get({ host: '127.0.0.1', port, path: '/json/list', timeout: 1500 }, (res) => {
@@ -289,56 +316,44 @@ async function inspectLiveWindow(portFileOrEnv, fallbackPort = 9222) {
     candidatePorts.push(fallbackPort);
   }
 
-  let port = null;
-  let targets = [];
+  let respondedPort = null;
+  let sawTargets = false;
+  const found = [];
   const triedPorts = new Set();
+
+  const takePort = async (candidate) => {
+    if (!(candidate > 0) || triedPorts.has(candidate)) return;
+    triedPorts.add(candidate);
+    const res = await fetchTargetsFromPort(candidate);
+    if (res.length === 0) return;
+    sawTargets = true;
+    if (!respondedPort) respondedPort = candidate;
+    for (const target of res) {
+      if (isInjectableTarget(target)) found.push({ port: candidate, target });
+    }
+  };
 
   for (const pf of candidateFiles) {
     if (pf && fs.existsSync(pf)) {
       const raw = fs.readFileSync(pf, 'utf8').trim();
       const parsed = parseInt(raw.split(/\r?\n/)[0], 10);
-      if (parsed > 0 && !triedPorts.has(parsed)) {
-        triedPorts.add(parsed);
-        const res = await fetchTargetsFromPort(parsed);
-        if (res.length > 0) {
-          port = parsed;
-          targets = res;
-          break;
-        }
-      }
+      await takePort(parsed);
     }
   }
-  if (targets.length === 0) {
-    for (const fb of candidatePorts) {
-      if (fb > 0 && !triedPorts.has(fb)) {
-        triedPorts.add(fb);
-        const fbTargets = await fetchTargetsFromPort(fb);
-        if (fbTargets.length > 0) {
-          port = fb;
-          targets = fbTargets;
-          break;
-        }
-      }
-    }
+  for (const fb of candidatePorts) {
+    await takePort(fb);
   }
-  if (!port || targets.length === 0) {
+  if (!sawTargets) {
     return { reachable: false, reason: 'No active CDP port responded (checked DevToolsActivePort & fallback port 9222)' };
   }
 
-  const pages = targets.filter(
-    (t) =>
-      t.type === 'page' &&
-      t.webSocketDebuggerUrl &&
-      !String(t.url || '').startsWith('devtools://') &&
-      isAllowedOrigin(t.url) &&
-      !String(t.title || '').includes('Launchpad')
-  );
-
-  if (pages.length === 0) {
-    return { reachable: true, port, pages: 0, reason: 'No active workbench page target' };
+  const chosen = found.find((item) => isAgentPanelUrl(item.target.url)) || found.find((item) => item.target.type === 'page');
+  if (!chosen) {
+    return { reachable: true, port: respondedPort, pages: 0, reason: 'No active workbench page target' };
   }
 
-  const page = pages[0];
+  const page = chosen.target;
+  const port = chosen.port;
   const state = await new Promise((resolve) => {
     const ws = new WebSocket(page.webSocketDebuggerUrl);
     const timer = setTimeout(() => {
@@ -358,6 +373,26 @@ async function inspectLiveWindow(portFileOrEnv, fallbackPort = 9222) {
               hasStyle: !!document.getElementById('ag-custom-fonts'),
               hasUserStyle: !!document.getElementById('antigravity-user-custom-style'),
               preset: document.documentElement.getAttribute('data-ag-preset'),
+              appearance: document.documentElement.getAttribute('data-ag-appearance'),
+              scheme: document.documentElement.getAttribute('data-ag-scheme'),
+              backgroundColor: getComputedStyle(document.body || document.documentElement).backgroundColor,
+              shellBg: (() => {
+                const el = document.querySelector('[aria-label="Sidebar"], .agy-inset-shell, .bg-sidebar');
+                return el ? getComputedStyle(el).backgroundColor : null;
+              })(),
+              composerBg: (() => {
+                const el = document.getElementById('antigravity.agentSidePanelInputBox');
+                return el ? getComputedStyle(el).backgroundColor : null;
+              })(),
+              cardBg: (() => {
+                const el = document.querySelector('.surface-composer-card, [id="antigravity.agentSidePanelInputBox"] .bg-card');
+                return el ? getComputedStyle(el).backgroundColor : null;
+              })(),
+              sidebarColor: (() => {
+                const el = document.querySelector('.bg-sidebar a, .bg-sidebar button, aside a, aside button');
+                return el ? getComputedStyle(el).color : null;
+              })(),
+              waxColor: getComputedStyle(document.documentElement).getPropertyValue('--ag-wax').trim(),
               pageType: document.documentElement.getAttribute('data-ag-page-type'),
               waxSeal: document.documentElement.getAttribute('data-ag-wax-seal'),
               dictCount: window.__ag_i18n_dict ? Object.keys(window.__ag_i18n_dict).length : 0,
@@ -594,6 +629,8 @@ async function runInstall() {
   const cliChannel = getArg('--channel', null);
   const channel = cliChannel || 'auto';
   const preset = getArg('--preset', null);
+  const schemeArg = getArg('--scheme', null);
+  const scheme = schemeArg === 'light' || schemeArg === 'dark' || schemeArg === 'auto' ? schemeArg : null;
   const defaultTarget = path.join(os.homedir(), '.gemini', 'antigravity', 'theme-patch');
   const targetDir = path.resolve(getArg('--target-dir', defaultTarget));
 
@@ -671,6 +708,20 @@ async function runInstall() {
     currentCfg.preset = preset;
   } else if (!currentCfg.preset) {
     currentCfg.preset = 'high-contrast';
+  }
+  if (scheme) {
+    currentCfg.scheme = scheme;
+  } else if (currentCfg.scheme !== 'light' && currentCfg.scheme !== 'dark' && currentCfg.scheme !== 'auto') {
+    currentCfg.scheme = 'auto';
+  }
+  // 字体 id 缺失或非法才写入默认值。已有布尔 modules.i18n 不在这里改写。
+  const UI_FONT_IDS = ['wenyuan-serif', 'wenyuan-sans', 'anthropic', 'system'];
+  const CODE_FONT_IDS = ['maple-bright', 'maple-mono', 'anthropic', 'sarasa'];
+  if (!currentCfg.fonts || typeof currentCfg.fonts !== 'object' || Array.isArray(currentCfg.fonts)) {
+    currentCfg.fonts = { ui: 'wenyuan-serif', code: 'maple-bright' };
+  } else {
+    if (UI_FONT_IDS.indexOf(currentCfg.fonts.ui) === -1) currentCfg.fonts.ui = 'wenyuan-serif';
+    if (CODE_FONT_IDS.indexOf(currentCfg.fonts.code) === -1) currentCfg.fonts.code = 'maple-bright';
   }
   fs.writeFileSync(userConfigPath, JSON.stringify(currentCfg, null, 2) + '\n', 'utf8');
 
@@ -934,7 +985,7 @@ switch (subcommand) {
     break;
   default:
     console.log(`Usage:
-  node install.mjs install       [--channel auto|stable|insiders] [--preset high-contrast]
+  node install.mjs install       [--channel auto|stable|insiders] [--preset high-contrast] [--scheme auto|light|dark]
   node install.mjs install-fonts --from <font-folder-path>
   node install.mjs doctor        [--channel auto|stable|insiders]
   node install.mjs verify        [--safe-mode] [--channel auto|stable|insiders]

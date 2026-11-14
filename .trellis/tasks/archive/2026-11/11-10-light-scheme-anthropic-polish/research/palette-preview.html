@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>亮色方案对照</title>
+<!--
+  规划用的示意页，不是实机截图，也不进内核。
+  布局按用户 2026-11-10 的截图等比缩到 0.7 倍。色值唯一来源是下面脚本里的 PALETTES / WAX。
+  字体取本机已装的 WenYuan Serif SC 与 MapleBright，没装会回退。
+-->
+<style>
+  :root {
+    --ui: 'WenYuan Serif SC', 'Source Han Serif SC', 'Noto Serif CJK SC', 'Songti SC', Georgia, serif;
+    --mono: 'MapleBright', 'Maple Mono NF CN', 'Maple Mono', 'Sarasa Mono Slab SC', Consolas, monospace;
+    --chrome: system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #C9C8C3; color: #1F1E1D; font: 13px/1.5 var(--chrome); }
+
+  /* 控制条：中性配色，不参与方案 */
+  .bar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; padding: 10px 18px; background: rgba(250, 250, 250, 0.94); border-bottom: 1px solid rgba(0, 0, 0, 0.16); backdrop-filter: blur(6px); }
+  .bar h1 { margin: 0; font-size: 14px; font-weight: 600; }
+  .group { display: flex; align-items: center; gap: 8px; }
+  .group > span { color: #5a5a5a; }
+  .seg { display: inline-flex; border: 1px solid rgba(0, 0, 0, 0.28); border-radius: 7px; overflow: hidden; }
+  .seg button { all: unset; padding: 5px 12px; cursor: pointer; font: 13px var(--chrome); color: #1f1f1f; }
+  .seg button + button { border-left: 1px solid rgba(0, 0, 0, 0.18); }
+  .seg button[aria-pressed="true"] { background: #1f1f1f; color: #fff; }
+  .seg button:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
+  .seg[aria-disabled="true"] { opacity: 0.4; pointer-events: none; }
+  .hint { color: #6a6a6a; margin-left: auto; }
+
+  .stage { padding: 22px 18px 8px; overflow-x: auto; }
+  .caption { width: 1400px; margin: 0 auto 8px; color: #3a3a3a; }
+
+  /* 窗口示意：1400 x 836，对应截图 2000 x 1194 */
+  .win { width: 1400px; height: 836px; margin: 0 auto; border-radius: 9px; overflow: hidden; background: var(--shell); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.26), 0 0 0 1px rgba(0, 0, 0, 0.2); display: grid; grid-template-rows: 29px 1fr; font-family: var(--ui); color: var(--ink); -webkit-font-smoothing: antialiased; }
+  .titlebar { background: var(--titlebar); display: flex; align-items: center; gap: 20px; padding: 0 14px; font-size: 12px; color: var(--menu); }
+  .titlebar .wc { margin-left: auto; display: flex; gap: 30px; color: var(--ink-strong); font: 12px var(--chrome); }
+  .shell { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 32px 1fr; min-height: 0; background: var(--shell); }
+  .tools { grid-column: 1 / -1; display: flex; align-items: center; gap: 16px; padding: 0 14px; color: var(--icon); }
+  .tools .logo { color: var(--ink-strong); font: 700 15px var(--chrome); }
+  .tools svg, .side svg, .composer svg { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .pill { margin-left: auto; padding: 2px 10px; border: 1px solid var(--line-ctl); border-radius: 999px; font: 12px var(--ui); color: var(--ink-strong); }
+
+  .side { display: flex; flex-direction: column; padding: 0 6px 6px; font-size: 12.5px; min-height: 0; border-right: 1px solid var(--line); }
+  .newconv, .nav, .proj, .row, .settings { display: flex; align-items: center; gap: 9px; height: 27.5px; padding: 0 12px; border-radius: 6px; white-space: nowrap; }
+  .newconv { height: 27px; border: 1px solid var(--line-ctl); border-radius: 7px; background: var(--btn); margin-bottom: 4px; }
+  .nav { height: 31px; }
+  .label { display: flex; align-items: center; justify-content: space-between; height: 28px; margin-top: 16px; padding: 0 12px; font-size: 10.5px; font-weight: 500; color: var(--ink-muted); }
+  .proj { margin-top: 2px; }
+  .row { padding-left: 30px; justify-content: space-between; }
+  .row span { overflow: hidden; text-overflow: ellipsis; }
+  .row time { font: 10.5px var(--mono); color: var(--ink-muted); }
+  .row.sel { background: var(--row-sel); color: var(--ink-strong); font-weight: 520; }
+  .row.hov { background: var(--row-hover); }
+  .row.weak { color: var(--ink-weak); }
+  .settings { margin-top: auto; }
+
+  .sheet { position: relative; margin: 0 2px 4px 0; border-radius: 9px; background: var(--sheet); box-shadow: inset 0 0 0 1px var(--line); }
+  .greet { position: absolute; left: 0; right: 0; top: 346px; text-align: center; font-size: 21px; color: var(--ink-strong); }
+
+  .composer { border-radius: 13px; background: var(--composer); border: 1.5px solid var(--wax-soft); font-family: var(--ui); }
+  .sheet > .composer { position: absolute; left: 164px; right: 164px; bottom: 20px; }
+  .strip { display: flex; align-items: center; gap: 18px; height: 30px; padding: 0 14px; font-size: 11.5px; font-weight: 500; color: var(--ink); }
+  .strip span { display: inline-flex; align-items: center; gap: 5px; }
+  .card { border-radius: 11.5px; background: var(--card); padding: 11px 13px 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02); }
+  .ph { height: 24px; font: 12.5px var(--mono); color: var(--placeholder); }
+  .ctl { display: flex; align-items: center; gap: 14px; margin-top: 9px; font-size: 11px; font-weight: 500; color: var(--ink-ctl); }
+  .ctl .metrics { padding-left: 10px; border-left: 1px solid var(--line); font: 500 10.5px var(--mono); color: var(--ink); }
+  .ctl .right { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; }
+  .send { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #D97757; border: 1px solid #C45F40; box-shadow: 0 1px 2px rgba(217, 119, 87, 0.25); color: #fff; }
+  /* 蜡封三态，对应 core/theme.css 的设计 C / A / B */
+  .composer[data-state="home"] { border-color: transparent; }
+  .composer[data-state="home-focus"] .card, .composer[data-state="chat-focus"] .card { box-shadow: 0 6px 20px -2px rgba(60, 20, 15, 0.07), 0 2px 6px -1px rgba(0, 0, 0, 0.04); }
+  .composer[data-state="chat"] { box-shadow: 0 1px 3px rgba(116, 34, 26, 0.03); }
+  .composer[data-state="chat-focus"] { border-color: var(--wax); box-shadow: 0 1px 4px rgba(116, 34, 26, 0.12); }
+
+  /* 下方：三态样张和令牌表 */
+  .below { width: 1400px; margin: 18px auto 40px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .panel { background: #fafafa; border: 1px solid rgba(0, 0, 0, 0.16); border-radius: 9px; padding: 14px 16px; }
+  .panel h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+  .states { display: grid; gap: 12px; padding: 16px; border-radius: 8px; background: var(--sheet); box-shadow: inset 0 0 0 1px var(--line); }
+  .states figure { margin: 0; }
+  .states figcaption { margin-bottom: 5px; font: 11px var(--chrome); color: var(--ink-muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 4px 6px; text-align: left; border-bottom: 1px solid rgba(0, 0, 0, 0.08); white-space: nowrap; }
+  th { color: #5a5a5a; font-weight: 500; }
+  td code { font: 11.5px var(--mono); }
+  .chip { display: inline-block; width: 26px; height: 14px; margin-right: 7px; vertical-align: -2px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18); background-image: linear-gradient(var(--c), var(--c)), repeating-conic-gradient(#ddd 0 25%, #fff 0 50%); background-size: auto, 8px 8px; }
+  .same td:nth-child(3) { color: #8a8a8a; }
+  .note { margin: 10px 0 0; color: #5a5a5a; }
+  .dark-ref { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.6"/></symbol>
+  <symbol id="i-box" viewBox="0 0 16 16"><rect x="2" y="6" width="12" height="7" rx="1"/><path d="M5.5 6V4h5v2M2 9.5h12"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 16 16"><path d="M5 6.5 8 9.5l3-3"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="5" cy="4" r="1.5"/><circle cx="5" cy="12" r="1.5"/><circle cx="11" cy="6" r="1.5"/><path d="M5 5.5v5M11 7.5c0 2-6 1.5-6 3"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 2 3.5 3.8v3.7c0 3 2 5.200 4.5 6.5 2.500-1.300 4.500-3.500 4.500-6.500V3.800z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 16 16"><rect x="6" y="2" width="4" height="7.500" rx="2"/><path d="M3.800 8a4.200 4.200 0 0 0 8.400 0M8 12.200V14"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="M8 12.500v-9M4.500 7 8 3.500 11.500 7"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><path d="m10 10 3.500 3.500"/></symbol>
+  <symbol id="i-back" viewBox="0 0 16 16"><path d="M13 8H3M7 4 3 8l4 4"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></symbol>
+</svg>
+
+<div class="bar">
+  <h1>亮色方案对照</h1>
+  <div class="group"><span>方案</span>
+    <div class="seg" id="seg-p">
+      <button data-p="cur" aria-pressed="false">现状</button>
+      <button data-p="a" aria-pressed="true">A 象牙暖纸</button>
+      <button data-p="b" aria-pressed="false">B 桌面端近白</button>
+    </div>
+  </div>
+  <div class="group"><span>蜡封</span>
+    <div class="seg" id="seg-w">
+      <button data-w="clay" aria-pressed="true">陶土</button>
+      <button data-w="maroon" aria-pressed="false">暗红</button>
+      <button data-w="neutral" aria-pressed="false">中性细线</button>
+    </div>
+  </div>
+  <span class="hint">键盘 1 / 2 / 3 原位切换方案，Q / W / E 切换蜡封</span>
+</div>
+
+<div class="stage">
+  <p class="caption" id="caption"></p>
+  <div class="win">
+    <div class="titlebar">
+      <span>Antigravity</span><span>Workspace</span><span>View</span><span>Window</span>
+      <span class="wc"><span>&#x2500;</span><span>&#x25A1;</span><span>&#x2715;</span></span>
+    </div>
+    <div class="shell">
+      <div class="tools">
+        <span class="logo">A</span>
+        <svg><use href="#i-back"/></svg><svg><use href="#i-fwd"/></svg><svg><use href="#i-search"/></svg>
+        <span class="pill">Open IDE</span>
+      </div>
+      <aside class="side">
+        <div class="newconv"><svg><use href="#i-plus"/></svg>New Conversation</div>
+        <div class="nav"><svg><use href="#i-clock"/></svg>Automations</div>
+        <div class="nav"><svg><use href="#i-box"/></svg>Customizations</div>
+        <div class="label"><span>Projects</span></div>
+        <div class="proj"><svg><use href="#i-folder"/></svg>docs</div>
+        <div class="row sel"><span>Light Scheme Token Review（选中）</span><time>1h</time></div>
+        <div class="row hov"><span>Release Notes Draft（悬停）</span><time>3d</time></div>
+        <div class="row"><span>General Greeting</span><time>3d</time></div>
+        <div class="row"><span>优化讲稿术语与任务创建</span><time>4d</time></div>
+        <div class="row"><span>Probability Practice Problems</span><time>4d</time></div>
+        <div class="row weak"><span>See all (23)</span></div>
+        <div class="proj"><svg><use href="#i-folder"/></svg>playground</div>
+        <div class="row"><span>Repository Initialization And Setup</span><time>1d</time></div>
+        <div class="proj"><svg><use href="#i-folder"/></svg>CLI Project</div>
+        <div class="row weak"><span>No conversations yet</span></div>
+        <div class="label"><span>Conversations</span></div>
+        <div class="settings"><svg><use href="#i-gear"/></svg>Settings</div>
+      </aside>
+      <main class="sheet">
+        <div class="greet">Welcome back.</div>
+        <div class="composer" data-state="home-focus">
+          <div class="strip">
+            <span><svg><use href="#i-folder"/></svg>playground<svg><use href="#i-chev"/></svg></span>
+            <span><svg><use href="#i-branch"/></svg>main<svg><use href="#i-chev"/></svg></span>
+          </div>
+          <div class="card">
+            <div class="ph">Ask anything, @ to mention, / for actions</div>
+            <div class="ctl">
+              <svg><use href="#i-plus"/></svg><span>Gemini 3.8 Flash High</span>
+              <span class="right"><svg><use href="#i-shield"/></svg>Turbo</span>
+              <svg><use href="#i-mic"/></svg>
+              <span class="send"><svg><use href="#i-up"/></svg></span>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<div class="below">
+  <section class="panel">
+    <h2>输入框蜡封三态</h2>
+    <div class="states">
+      <figure><figcaption>首页常态：外框透明</figcaption>
+        <div class="composer" data-state="home"><div class="strip"><span><svg><use href="#i-folder"/></svg>playground</span></div><div class="card"><div class="ph">Ask anything</div></div></div>
+      </figure>
+      <figure><figcaption>首页聚焦，以及会话里的常态：淡线</figcaption>
+        <div class="composer" data-state="chat"><div class="card"><div class="ph">Ask anything</div><div class="ctl"><svg><use href="#i-plus"/></svg><span>Gemini 3.8 Flash High</span><span class="metrics">32 tok/s · TTFT 6.5s · Ctx 73k</span><span class="right">Turbo</span><span class="send"><svg><use href="#i-up"/></svg></span></div></div></div>
+      </figure>
+      <figure><figcaption>会话里悬停或聚焦：浓线</figcaption>
+        <div class="composer" data-state="chat-focus"><div class="card"><div class="ph">Ask anything</div><div class="ctl"><svg><use href="#i-plus"/></svg><span>Gemini 3.8 Flash High</span><span class="metrics">32 tok/s · TTFT 6.5s · Ctx 73k</span><span class="right">Turbo</span><span class="send"><svg><use href="#i-up"/></svg></span></div></div></div>
+      </figure>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>令牌：现状与所选方案</h2>
+    <table id="tokens"></table>
+    <p class="note" id="contrast"></p>
+    <h2 style="margin-top:14px">暗色令牌（参照，本任务不改）</h2>
+    <div class="dark-ref" id="dark"></div>
+  </section>
+</div>
+
+<script>
+// 色值唯一来源。cur 取自截图量色与 core/theme.css；a / b 的出处见同目录 claude-desktop-light-tokens.md。
+const PALETTES = {
+  cur: {
+    name: '现状',
+    note: '2026-11-10 截图量色。外壳是原生冷灰，线条是纯黑 35%，输入框是桃粉配暗红。',
+    v: {
+      titlebar: '#F7F5F0', shell: '#F3F3F3', sheet: '#FCFCFB', btn: '#FFFFFF', composer: '#F7EFE6', card: '#FFFFFF',
+      'row-sel': '#ECE9E1', 'row-hover': '#F2EFE7',
+      line: 'rgba(0, 0, 0, 0.35)', 'line-ctl': 'rgba(0, 0, 0, 0.35)',
+      'ink-strong': '#0A0A0A', ink: '#262422', 'ink-ctl': '#0A0A0A', 'ink-muted': '#7A7670', 'ink-weak': '#A09C97', placeholder: '#757474',
+      menu: '#5E5B66', icon: '#777777'
+    }
+  },
+  a: {
+    name: 'A 象牙暖纸',
+    note: '本项目采用的暖纸灰阶（品牌参考，非官方桌面令牌）。纸面、外壳、输入框是同一色族的三级，线条是 15% 的墨。',
+    v: {
+      titlebar: '#F0EEE6', shell: '#F0EEE6', sheet: '#FAF9F5', btn: '#FFFFFF', composer: '#F0EEE6', card: '#FFFFFF',
+      'row-sel': '#E3E0D5', 'row-hover': '#E8E6DC',
+      line: 'rgba(31, 30, 29, 0.15)', 'line-ctl': 'rgba(31, 30, 29, 0.25)',
+      'ink-strong': '#141413', ink: '#3D3D3A', 'ink-ctl': '#141413', 'ink-muted': '#65635D', 'ink-weak': '#9C9A92', placeholder: '#87867F',
+      menu: '#5E5D59', icon: '#73726C'
+    }
+  },
+  b: {
+    name: 'B 桌面端近白',
+    note: '未采用的近白候选示意，非官方桌面令牌。纸面保持 #FCFCFB，外壳换成同色族的 #F9F9F7，线条是 10% 的墨。',
+    v: {
+      titlebar: '#F9F9F7', shell: '#F9F9F7', sheet: '#FCFCFB', btn: '#FFFFFF', composer: '#F4F4F1', card: '#FFFFFF',
+      'row-sel': '#EDEDEA', 'row-hover': '#F2F2EF',
+      line: 'rgba(20, 20, 20, 0.10)', 'line-ctl': 'rgba(20, 20, 20, 0.20)',
+      'ink-strong': '#141413', ink: '#3D3D3A', 'ink-ctl': '#141413', 'ink-muted': '#65635D', 'ink-weak': '#9C9A92', placeholder: '#87867F',
+      menu: '#5E5D59', icon: '#73726C'
+    }
+  }
+};
+const WAX = {
+  clay: { name: '陶土', wax: '#C6613F', soft: 'rgba(198, 97, 63, 0.40)' },
+  maroon: { name: '暗红', wax: '#74221A', soft: 'rgba(116, 34, 26, 0.36)' },
+  neutral: { name: '中性细线', wax: 'rgba(31, 30, 29, 0.32)', soft: 'rgba(31, 30, 29, 0.15)' }
+};
+const ROWS = [
+  ['纸面 --background', 'sheet'], ['外壳与侧栏 --sidebar', 'shell'], ['标题栏', 'titlebar'], ['输入框外层', 'composer'], ['输入框内卡', 'card'],
+  ['选中行', 'row-sel'], ['悬停行', 'row-hover'], ['外框线与中缝', 'line'], ['控件描边', 'line-ctl'],
+  ['重墨', 'ink-strong'], ['侧栏条目', 'ink'], ['弱化字', 'ink-muted'], ['蜡封浓线', 'wax'], ['蜡封淡线', 'wax-soft']
+];
+const DARK = [['页面', '#1C1917'], ['侧栏', '#24201C'], ['输入框外层', '#2A231E'], ['内卡', '#1F1B18'], ['正文', '#F4EFE6'], ['弱化字', '#A89888'], ['蜡封', '#C46A58'], ['发送', '#D97757']];
+
+let p = 'a';
+let w = 'clay';
+const root = document.documentElement;
+
+function resolved(key, wax) {
+  const v = Object.assign({}, PALETTES[key].v);
+  const wx = key === 'cur' ? WAX.maroon : WAX[wax];
+  v.wax = wx.wax;
+  v['wax-soft'] = wx.soft;
+  return v;
+}
+
+// 把可能带透明度的颜色压到底色上，得到 sRGB 三元组，用来算对比度
+function toRgb(c, under) {
+  const hex = /^#([0-9a-f]{6})$/i.exec(c);
+  if (hex) return [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
+  const m = /rgba?\(([^)]+)\)/.exec(c);
+  if (!m) return [0, 0, 0];
+  const parts = m[1].split(',').map((s) => parseFloat(s));
+  const a = parts.length > 3 ? parts[3] : 1;
+  const bg = under ? toRgb(under) : [255, 255, 255];
+  return parts.slice(0, 3).map((x, i) => Math.round(x * a + bg[i] * (1 - a)));
+}
+function lum(rgb) {
+  const f = (x) => { x /= 255; return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+function ratio(fg, bg) {
+  const a = lum(toRgb(fg, bg));
+  const b = lum(toRgb(bg));
+  return ((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toFixed(2);
+}
+
+function cell(val) {
+  const td = document.createElement('td');
+  const chip = document.createElement('span');
+  chip.className = 'chip';
+  chip.style.setProperty('--c', val);
+  const code = document.createElement('code');
+  code.textContent = val;
+  td.append(chip, code);
+  return td;
+}
+
+function render() {
+  const now = resolved(p, w);
+  const cur = resolved('cur', w);
+  for (const [k, val] of Object.entries(now)) root.style.setProperty('--' + k, val);
+
+  for (const b of document.querySelectorAll('#seg-p button')) b.setAttribute('aria-pressed', String(b.dataset.p === p));
+  for (const b of document.querySelectorAll('#seg-w button')) b.setAttribute('aria-pressed', String(b.dataset.w === w));
+  document.getElementById('seg-w').setAttribute('aria-disabled', String(p === 'cur'));
+  document.getElementById('caption').textContent = PALETTES[p].name + '。' + PALETTES[p].note + (p === 'cur' ? '' : ' 蜡封：' + WAX[w].name + '。');
+
+  const table = document.getElementById('tokens');
+  table.replaceChildren();
+  const head = document.createElement('tr');
+  for (const t of ['角色', '现状', PALETTES[p].name]) { const th = document.createElement('th'); th.textContent = t; head.append(th); }
+  table.append(head);
+  for (const [label, key] of ROWS) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.textContent = label;
+    tr.append(td, cell(cur[key]), cell(now[key]));
+    if (cur[key] === now[key]) tr.className = 'same';
+    table.append(tr);
+  }
+
+  document.getElementById('contrast').textContent =
+    '对比度（所选方案）：侧栏条目对外壳 ' + ratio(now.ink, now.shell) + '，弱化字对外壳 ' + ratio(now['ink-muted'], now.shell) +
+    '，重墨对纸面 ' + ratio(now['ink-strong'], now.sheet) + '，外框线对纸面 ' + ratio(now.line, now.sheet) +
+    '，外壳对纸面 ' + ratio(now.shell, now.sheet) + '。';
+}
+
+document.getElementById('seg-p').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { p = b.dataset.p; render(); } });
+document.getElementById('seg-w').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { w = b.dataset.w; render(); } });
+document.addEventListener('keydown', (e) => {
+  const pk = { 1: 'cur', 2: 'a', 3: 'b' }[e.key];
+  const wk = { q: 'clay', w: 'maroon', e: 'neutral' }[e.key.toLowerCase()];
+  if (pk) { p = pk; render(); } else if (wk && p !== 'cur') { w = wk; render(); }
+});
+
+const dark = document.getElementById('dark');
+for (const [label, val] of DARK) {
+  const s = document.createElement('span');
+  const chip = document.createElement('span');
+  chip.className = 'chip';
+  chip.style.setProperty('--c', val);
+  const code = document.createElement('code');
+  code.textContent = val;
+  s.append(chip, label + ' ', code);
+  dark.append(s);
+}
+render();
+</script>
+</body>
+</html>

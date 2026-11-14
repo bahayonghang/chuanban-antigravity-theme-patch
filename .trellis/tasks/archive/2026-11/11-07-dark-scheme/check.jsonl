@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/inject/quality.md", "reason": "注入层审查和 manifest 要求"}
+{"file": ".trellis/spec/node/quality.md", "reason": "doctor 与 verify 的完成标准"}
+{"file": ".trellis/spec/node/boundaries.md", "reason": "确认没有放宽来源白名单或覆盖 user"}
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "确认预设别名、蜡封变量和词典排除还在"}
+{"file": ".trellis/tasks/11-07-dark-scheme/prd.md", "reason": "验收标准"}

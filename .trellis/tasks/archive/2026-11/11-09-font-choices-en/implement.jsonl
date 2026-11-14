@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/inject/theme-and-i18n.md", "reason": "字体四层分工和 local() 约定；正文与输入框不能继续写死旧栈"}
+{"file": ".trellis/spec/inject/runtime.md", "reason": "boot 字段、模块缺省和 enabled:false 卸载属性"}
+{"file": ".trellis/spec/inject/user-layer.md", "reason": "安装不覆盖已有 user/；i18n 开关与热重载"}
+{"file": ".trellis/spec/node/boundaries.md", "reason": "改内核后必须 build-manifest，不能手改哈希"}
+{"file": ".trellis/tasks/11-09-font-choices-en/research/font-and-i18n.md", "reason": "原生下拉盖不住、注册表字体名、哈希必须含 fonts"}

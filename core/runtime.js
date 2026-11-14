@@ -4,8 +4,19 @@
  * 由 core/daemon.mjs 读取并将文件末尾的启动载荷占位符替换为实时配置与资源对象。
  */
 ((boot) => {
-  // 0. 顶层窗口隔离：绝不注入 Artifact / HTML 预览等子 iframe
-  if (window.top !== window) return;
+  // 非顶层只放行本机 Agent 面板。Artifact / HTML 预览等子 iframe 仍不注入。
+  const isAgentPanelWindow = () => {
+    try {
+      const loc = window.location;
+      if (!loc || (loc.protocol !== 'http:' && loc.protocol !== 'https:')) return false;
+      if (loc.hostname !== '127.0.0.1' && loc.hostname !== 'localhost') return false;
+      const q = new URLSearchParams(loc.search || '');
+      return q.get('extensionView') === 'true' || q.has('hostTheme');
+    } catch (e) {
+      return false;
+    }
+  };
+  if (window.top !== window && !isAgentPanelWindow()) return;
   if (!boot || typeof boot !== 'object') return;
 
   const PATCH_VERSION = boot.version || '20261104-v5.0.0';
@@ -19,7 +30,7 @@
   }
   const MODULES = Object.assign(
     {
-      i18n: true,
+      i18n: false,
       metrics: true,
       composerWaxSeal: true,
       deadlockHealer: true,
@@ -31,6 +42,14 @@
   MODULES.metricsCapsule = MODULES.metrics;
 
   const DEFAULT_PRESET = boot.preset || 'high-contrast';
+  const BOOT_SCHEME = boot.scheme === 'light' || boot.scheme === 'dark' || boot.scheme === 'auto' ? boot.scheme : 'auto';
+  const METRICS_LANG =
+    boot.metricsLang === 'zh' || boot.metricsLang === 'en' || boot.metricsLang === 'auto' ? boot.metricsLang : 'auto';
+  const UI_FONT_IDS = ['wenyuan-serif', 'wenyuan-sans', 'anthropic', 'system'];
+  const CODE_FONT_IDS = ['maple-bright', 'maple-mono', 'anthropic', 'sarasa'];
+  const rawFontConfig = boot.fonts && typeof boot.fonts === 'object' && !Array.isArray(boot.fonts) ? boot.fonts : {};
+  const FONT_UI = UI_FONT_IDS.indexOf(rawFontConfig.ui) !== -1 ? rawFontConfig.ui : 'wenyuan-serif';
+  const FONT_CODE = CODE_FONT_IDS.indexOf(rawFontConfig.code) !== -1 ? rawFontConfig.code : 'maple-bright';
   const SELECTORS = Object.assign(
     {
       inputBoxId: 'antigravity.agentSidePanelInputBox',
@@ -82,30 +101,95 @@
     } catch (e) {}
   }
 
-  function applyThemeVars(varsObj) {
+  const NON_COLOR_THEME_VARS = new Set(['--ag-chat-font-size']);
+
+  function applyThemeVars(varsObj, allowColorVars = true) {
+    const rawVars = varsObj && typeof varsObj === 'object' ? varsObj : {};
+    const effectiveVars = {};
+    const rawKeys = Object.keys(rawVars);
+    for (let i = 0; i < rawKeys.length; i++) {
+      const k = rawKeys[i];
+      if (allowColorVars || NON_COLOR_THEME_VARS.has(k)) {
+        effectiveVars[k] = rawVars[k];
+      }
+    }
+
+    const styleEl = document.documentElement.style;
     const prevKeys = Array.isArray(window.__ag_applied_theme_vars) ? window.__ag_applied_theme_vars : [];
-    const nextKeys = Object.keys(varsObj || {});
+    const prevValMap =
+      window.__ag_applied_theme_var_values && typeof window.__ag_applied_theme_var_values === 'object'
+        ? window.__ag_applied_theme_var_values
+        : {};
+    const nextKeys = [];
+    const nextValMap = {};
+    let mutatedStyle = false;
+
     for (let i = 0; i < prevKeys.length; i++) {
       const k = prevKeys[i];
-      if (!(k in (varsObj || {}))) {
-        document.documentElement.style.removeProperty(k);
+      if (!(k in effectiveVars)) {
+        const cur = styleEl.getPropertyValue(k).trim();
+        if (cur !== '' && (!(k in prevValMap) || cur === prevValMap[k])) {
+          styleEl.removeProperty(k);
+          mutatedStyle = true;
+        }
       }
     }
-    for (let i = 0; i < nextKeys.length; i++) {
-      const k = nextKeys[i];
-      const v = varsObj[k];
-      if (v !== null && v !== undefined && String(v).trim() !== '') {
-        document.documentElement.style.setProperty(k, String(v).trim());
+
+    const effKeys = Object.keys(effectiveVars);
+    for (let i = 0; i < effKeys.length; i++) {
+      const k = effKeys[i];
+      const v = effectiveVars[k];
+      const trimmed = v !== null && v !== undefined ? String(v).trim() : '';
+      if (trimmed !== '') {
+        if (styleEl.getPropertyValue(k).trim() !== trimmed) {
+          styleEl.setProperty(k, trimmed);
+          mutatedStyle = true;
+        }
+        nextKeys.push(k);
+        nextValMap[k] = trimmed;
       } else {
-        document.documentElement.style.removeProperty(k);
+        const cur = styleEl.getPropertyValue(k).trim();
+        if (cur !== '' && (!(k in prevValMap) || cur === prevValMap[k])) {
+          styleEl.removeProperty(k);
+          mutatedStyle = true;
+        }
       }
     }
-    if (varsObj && varsObj['--ag-chat-font-size']) {
-      document.documentElement.setAttribute('data-ag-custom-font-size', 'true');
-    } else {
+
+    if (effectiveVars['--ag-chat-font-size']) {
+      if (document.documentElement.getAttribute('data-ag-custom-font-size') !== 'true') {
+        document.documentElement.setAttribute('data-ag-custom-font-size', 'true');
+      }
+    } else if (document.documentElement.hasAttribute('data-ag-custom-font-size')) {
       document.documentElement.removeAttribute('data-ag-custom-font-size');
     }
+
     window.__ag_applied_theme_vars = nextKeys;
+    window.__ag_applied_theme_var_values = nextValMap;
+
+    // 同步排空由补丁自身写 style 产生的观察记录，防止 style 监听自触发循环
+    if (mutatedStyle && window.__ag_scheme_observer) {
+      try {
+        window.__ag_scheme_observer.takeRecords();
+      } catch (e) {}
+    }
+  }
+
+  // 类名与内联外观变量变化要重判 scheme 与默认外观。再次注入和卸载都先断开，避免叠 observer。
+  function disconnectSchemeObservers() {
+    if (window.__ag_scheme_observer) {
+      try {
+        window.__ag_scheme_observer.disconnect();
+      } catch (e) {}
+      window.__ag_scheme_observer = null;
+    }
+    if (window.__ag_scheme_body_wait) {
+      try {
+        window.__ag_scheme_body_wait.disconnect();
+      } catch (e) {}
+      window.__ag_scheme_body_wait = null;
+    }
+    window.__ag_ns_on_patch_fn = null;
   }
 
   // 若用户在 user/config.json 中将 enabled 设为 false，执行无损卸载还原
@@ -130,13 +214,32 @@
       } catch (e) {}
       window.__ag_metrics_route_watcher = null;
     }
+    if (window.__ag_metrics_ro) {
+      try {
+        window.__ag_metrics_ro.disconnect();
+      } catch (e) {}
+      window.__ag_metrics_ro = null;
+      window.__ag_metrics_ro_target = null;
+    }
     applyThemeVars({});
+    disconnectSchemeObservers();
     document.documentElement.removeAttribute('data-ag-preset');
+    document.documentElement.removeAttribute('data-ag-appearance');
+    document.documentElement.removeAttribute('data-ag-scheme');
     document.documentElement.removeAttribute('data-ag-page-type');
     document.documentElement.removeAttribute('data-ag-wax-seal');
+    document.documentElement.removeAttribute('data-ag-font-ui');
+    document.documentElement.removeAttribute('data-ag-font-code');
     restoreAllTranslations(document.body);
     window.__ag_patch_version = PATCH_VERSION + '-disabled';
     return;
+  }
+
+  if (document.documentElement.getAttribute('data-ag-font-ui') !== FONT_UI) {
+    document.documentElement.setAttribute('data-ag-font-ui', FONT_UI);
+  }
+  if (document.documentElement.getAttribute('data-ag-font-code') !== FONT_CODE) {
+    document.documentElement.setAttribute('data-ag-font-code', FONT_CODE);
   }
 
   // ============================================================================
@@ -168,7 +271,6 @@
     userStyle.remove();
   }
 
-  applyThemeVars(THEME_VARS);
   document.documentElement.setAttribute('data-ag-wax-seal', MODULES.composerWaxSeal === false ? 'off' : 'on');
   const detectedOs =
     boot.platform || (/Win/i.test(navigator.platform || '') ? 'win32' : /Mac/i.test(navigator.platform || '') ? 'darwin' : 'linux');
@@ -244,7 +346,7 @@
   }
 
   // ============================================================================
-  // 3. 专属色彩预设状态联动（支持 user/config.json 热重载切换）与防白屏崩溃保护
+  // 3. 专属色彩预设状态联动（仅在默认 Appearance 下接管主题色，零轮询实时退让非默认主题）
   // ============================================================================
   const PRESETS = {
     HIGH_CONTRAST: 'high-contrast',
@@ -257,6 +359,23 @@
 
   const ALL_CUSTOM_PRESET_NAMES = new Set(Object.values(PRESETS));
 
+  const STOCK_SEEDS = {
+    light: {
+      '--background': new Set(['#ffffff', '#f9f9f9']),
+      '--foreground': new Set(['#0a0a0c', '#000000', '#101010']),
+      '--primary': new Set(['#2f75c3', '#2560a3', '#007acc'])
+    },
+    dark: {
+      '--background': new Set(['#070708', '#050507', '#101010']),
+      '--foreground': new Set(['#ffffff', '#cccccc']),
+      '--primary': new Set(['#2f71e3', '#007acc'])
+    }
+  };
+
+  if (!window.__ag_ns_presets) {
+    window.__ag_ns_presets = Object.create(null);
+  }
+
   // 当用户在 user/config.json 中修改了 preset 时，同步刷新 localStorage 中的 theme-color-flavor
   if (DEFAULT_PRESET && window.__ag_last_boot_preset !== DEFAULT_PRESET) {
     window.__ag_last_boot_preset = DEFAULT_PRESET;
@@ -265,7 +384,88 @@
     } catch (e) {}
   }
 
-  function syncChuanbanPreset() {
+  function resolveHostScheme() {
+    try {
+      const hostTheme = new URLSearchParams(window.location.search || '').get('hostTheme');
+      if (hostTheme === 'dark' || hostTheme === 'light') return hostTheme;
+    } catch (e) {}
+    const body = document.body;
+    const root = document.documentElement;
+    if ((body && body.classList.contains('theme-dark')) || root.classList.contains('theme-dark')) return 'dark';
+    if ((body && body.classList.contains('theme-light')) || root.classList.contains('theme-light')) return 'light';
+    try {
+      const stored = Storage.prototype.getItem.call(localStorage, 'theme-mode');
+      if (stored === 'dark' || stored === 'light') return stored;
+    } catch (e) {}
+    return 'light';
+  }
+
+  function resolveAgScheme() {
+    if (BOOT_SCHEME === 'light' || BOOT_SCHEME === 'dark') return BOOT_SCHEME;
+    return resolveHostScheme();
+  }
+
+  function isStockPresetName(name, hostScheme) {
+    if (name === undefined || name === null || name === '' || name === 'Default') return true;
+    if (ALL_CUSTOM_PRESET_NAMES.has(name)) return true;
+    return hostScheme === 'dark' ? name === 'Default Dark' : name === 'Default Light';
+  }
+
+  function isDefaultAppearance(hostScheme) {
+    try {
+      const body = document.body;
+      if (window.top !== window && isAgentPanelWindow() && (!body || !body.hasAttribute('data-agy-theme'))) {
+        return true;
+      }
+      // Legacy Light / Legacy Dark 在 NewUX 下会移除 data-agy-home-glow
+      if (body && body.hasAttribute('data-agy-theme') && !body.hasAttribute('data-agy-home-glow')) {
+        return false;
+      }
+
+      const seedSets = hostScheme === 'dark' ? STOCK_SEEDS.dark : STOCK_SEEDS.light;
+      const seedProps = ['--background', '--foreground', '--primary'];
+      const styleEl = document.documentElement.style;
+      let checkedLiveSeeds = 0;
+
+      for (let i = 0; i < seedProps.length; i++) {
+        const prop = seedProps[i];
+        if (
+          Object.prototype.hasOwnProperty.call(THEME_VARS, prop) &&
+          THEME_VARS[prop] !== null &&
+          THEME_VARS[prop] !== undefined &&
+          String(THEME_VARS[prop]).trim() !== ''
+        ) {
+          continue;
+        }
+        const raw = styleEl.getPropertyValue(prop).trim().toLowerCase();
+        if (!raw || raw.startsWith('var(')) continue;
+        checkedLiveSeeds++;
+        if (!seedSets[prop].has(raw)) {
+          return false;
+        }
+      }
+
+      if (checkedLiveSeeds === 3) {
+        return true;
+      }
+
+      const presetKey = hostScheme === 'dark' ? 'theme-preset-dark' : 'theme-preset-light';
+      let storedPreset;
+      if (window.__ag_ns_presets && presetKey in window.__ag_ns_presets) {
+        storedPreset = window.__ag_ns_presets[presetKey];
+      } else {
+        try {
+          storedPreset = Storage.prototype.getItem.call(localStorage, presetKey);
+        } catch (e) {}
+      }
+      return isStockPresetName(storedPreset, hostScheme);
+    } catch (e) {
+      return true;
+    }
+  }
+
+  function resolveTargetPreset() {
+    let flavor = DEFAULT_PRESET || PRESETS.HIGH_CONTRAST;
     try {
       const stored = Storage.prototype.getItem.call(localStorage, 'theme-preset-light');
       if (ALL_CUSTOM_PRESET_NAMES.has(stored)) {
@@ -273,30 +473,153 @@
           Storage.prototype.setItem.call(localStorage, 'theme-preset-light', 'Default Light');
         } catch (e) {}
       }
+      flavor = Storage.prototype.getItem.call(localStorage, 'theme-color-flavor') || flavor;
+    } catch (e) {}
 
-      const flavor =
-        Storage.prototype.getItem.call(localStorage, 'theme-color-flavor') || DEFAULT_PRESET || PRESETS.HIGH_CONTRAST;
+    if (flavor === PRESETS.CLAUDE_PUREWHITE || flavor === PRESETS.LEGACY_OFFICIAL || flavor === 'ClaudeDesktop 净白') {
+      return PRESETS.CLAUDE_PUREWHITE;
+    }
+    if (flavor === PRESETS.VINTAGE_DEEP || flavor === PRESETS.LEGACY_CHUANBAN || flavor === '复古深色') {
+      return PRESETS.VINTAGE_DEEP;
+    }
+    return PRESETS.HIGH_CONTRAST;
+  }
 
-      let targetPreset = PRESETS.HIGH_CONTRAST;
-      if (flavor === PRESETS.HIGH_CONTRAST || flavor === PRESETS.LEGACY_WARM_WHITE || flavor === '高对比版') {
-        targetPreset = PRESETS.HIGH_CONTRAST;
-      } else if (
-        flavor === PRESETS.CLAUDE_PUREWHITE ||
-        flavor === PRESETS.LEGACY_OFFICIAL ||
-        flavor === 'ClaudeDesktop 净白'
-      ) {
-        targetPreset = PRESETS.CLAUDE_PUREWHITE;
-      } else if (flavor === PRESETS.VINTAGE_DEEP || flavor === PRESETS.LEGACY_CHUANBAN || flavor === '复古深色') {
-        targetPreset = PRESETS.VINTAGE_DEEP;
-      }
-
-      if (document.documentElement.getAttribute('data-ag-preset') !== targetPreset) {
-        document.documentElement.setAttribute('data-ag-preset', targetPreset);
+  function syncChuanbanScheme() {
+    try {
+      const next = resolveAgScheme();
+      if (document.documentElement.getAttribute('data-ag-scheme') !== next) {
+        document.documentElement.setAttribute('data-ag-scheme', next);
       }
     } catch (e) {}
   }
 
+  function syncChuanbanPreset() {
+    try {
+      const hostScheme = resolveHostScheme();
+      const effectiveScheme = BOOT_SCHEME === 'light' || BOOT_SCHEME === 'dark' ? BOOT_SCHEME : hostScheme;
+      if (document.documentElement.getAttribute('data-ag-scheme') !== effectiveScheme) {
+        document.documentElement.setAttribute('data-ag-scheme', effectiveScheme);
+      }
+
+      const isDefault = isDefaultAppearance(hostScheme);
+      const nextAppearance = isDefault ? 'default' : 'custom';
+      if (document.documentElement.getAttribute('data-ag-appearance') !== nextAppearance) {
+        document.documentElement.setAttribute('data-ag-appearance', nextAppearance);
+      }
+
+      if (isDefault) {
+        const targetPreset = resolveTargetPreset();
+        if (document.documentElement.getAttribute('data-ag-preset') !== targetPreset) {
+          document.documentElement.setAttribute('data-ag-preset', targetPreset);
+        }
+        applyThemeVars(THEME_VARS, true);
+      } else {
+        if (document.documentElement.hasAttribute('data-ag-preset')) {
+          document.documentElement.removeAttribute('data-ag-preset');
+        }
+        applyThemeVars(THEME_VARS, false);
+      }
+    } catch (e) {}
+  }
+
+  function installSchemeObserver() {
+    disconnectSchemeObservers();
+    const root = document.documentElement;
+    if (!root || typeof MutationObserver !== 'function') return;
+    const obs = new MutationObserver(() => {
+      syncChuanbanPreset();
+    });
+    window.__ag_scheme_observer = obs;
+    try {
+      obs.observe(root, { attributes: true, attributeFilter: ['class', 'style'] });
+    } catch (e) {}
+    const bodyAttrFilter = ['class', 'data-agy-theme', 'data-agy-home-glow'];
+    if (document.body) {
+      try {
+        obs.observe(document.body, { attributes: true, attributeFilter: bodyAttrFilter });
+      } catch (e) {}
+      return;
+    }
+    const wait = new MutationObserver(() => {
+      if (!document.body) return;
+      try {
+        wait.disconnect();
+      } catch (e) {}
+      if (window.__ag_scheme_body_wait !== wait) return;
+      window.__ag_scheme_body_wait = null;
+      try {
+        obs.observe(document.body, { attributes: true, attributeFilter: bodyAttrFilter });
+      } catch (e) {}
+      syncChuanbanPreset();
+    });
+    window.__ag_scheme_body_wait = wait;
+    try {
+      wait.observe(root, { childList: true });
+    } catch (e) {
+      window.__ag_scheme_body_wait = null;
+    }
+  }
+
   window.__ag_sync_preset_fn = syncChuanbanPreset;
+  window.__ag_ns_on_patch_fn = (patch) => {
+    if (!patch || typeof patch !== 'object') return;
+    let touched = false;
+    if ('theme-preset-light' in patch) {
+      window.__ag_ns_presets['theme-preset-light'] = patch['theme-preset-light'];
+      touched = true;
+    }
+    if ('theme-preset-dark' in patch) {
+      window.__ag_ns_presets['theme-preset-dark'] = patch['theme-preset-dark'];
+      touched = true;
+    }
+    if (touched && typeof window.__ag_sync_preset_fn === 'function') {
+      window.__ag_sync_preset_fn();
+    }
+  };
+
+  if (!window.__ag_ns_hook_installed && window.nativeStorage) {
+    window.__ag_ns_hook_installed = true;
+    try {
+      if (typeof window.nativeStorage.onChanged === 'function') {
+        window.nativeStorage.onChanged((patch) => {
+          if (typeof window.__ag_ns_on_patch_fn === 'function') {
+            window.__ag_ns_on_patch_fn(patch);
+          }
+        });
+      }
+      if (typeof window.nativeStorage.updateItems === 'function') {
+        const origUpdate = window.nativeStorage.updateItems.bind(window.nativeStorage);
+        window.nativeStorage.updateItems = function (patch) {
+          try {
+            if (typeof window.__ag_ns_on_patch_fn === 'function') {
+              window.__ag_ns_on_patch_fn(patch);
+            }
+          } catch (e) {}
+          return origUpdate(patch);
+        };
+      }
+    } catch (e) {}
+  }
+
+  if (window.nativeStorage && typeof window.nativeStorage.getItems === 'function') {
+    try {
+      Promise.resolve(window.nativeStorage.getItems())
+        .then((items) => {
+          if (!items || typeof items !== 'object') return;
+          if ('theme-preset-light' in items) {
+            window.__ag_ns_presets['theme-preset-light'] = items['theme-preset-light'];
+          }
+          if ('theme-preset-dark' in items) {
+            window.__ag_ns_presets['theme-preset-dark'] = items['theme-preset-dark'];
+          }
+          if (typeof window.__ag_sync_preset_fn === 'function') {
+            window.__ag_sync_preset_fn();
+          }
+        })
+        .catch(() => {});
+    } catch (e) {}
+  }
 
   if (!window.__ag_preset_hook_installed) {
     window.__ag_preset_hook_installed = true;
@@ -316,7 +639,12 @@
           val = 'Default Light';
         }
         origSetItem(key, val);
-        if (key === 'theme-preset-light' || key === 'theme-mode' || key === 'theme-color-flavor') {
+        if (
+          key === 'theme-preset-light' ||
+          key === 'theme-preset-dark' ||
+          key === 'theme-mode' ||
+          key === 'theme-color-flavor'
+        ) {
           setTimeout(() => {
             if (typeof window.__ag_sync_preset_fn === 'function') window.__ag_sync_preset_fn();
           }, 50);
@@ -326,6 +654,7 @@
   }
 
   syncChuanbanPreset();
+  installSchemeObserver();
   window.__ag_patch_version = PATCH_VERSION;
 
   // ============================================================================
@@ -358,8 +687,33 @@
     } else if (tt && tt.parentElement !== document.body && document.body) {
       document.body.appendChild(tt);
     }
+    if (tt && tt.getAttribute('role') !== 'tooltip') {
+      tt.setAttribute('role', 'tooltip');
+    }
     return tt;
   }
+
+  function showMetricsTooltip(pill) {
+    if (!pill) return;
+    const tt = ensureMetricsTooltip();
+    if (!tt || !tt.innerHTML) return;
+    const r = pill.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return;
+    const ttWidth = Math.min(456, Math.max(368, tt.offsetWidth || 410));
+    const left = Math.max(12, Math.min(r.left, window.innerWidth - ttWidth - 16));
+    const bottomPx = Math.min(window.innerHeight - r.top + 8, window.innerHeight - (tt.offsetHeight || 220) - 12);
+    tt.style.left = left + 'px';
+    tt.style.bottom = Math.max(8, bottomPx) + 'px';
+    tt.setAttribute('data-visible', '1');
+  }
+
+  function hideMetricsTooltip() {
+    const tt = document.getElementById('ag-live-metrics-tooltip');
+    if (tt) tt.removeAttribute('data-visible');
+  }
+
+  window.__ag_show_metrics_tooltip = showMetricsTooltip;
+  window.__ag_hide_metrics_tooltip = hideMetricsTooltip;
 
   function findFooterRow(box) {
     if (!box) return null;
@@ -412,30 +766,71 @@
     if (rightGroup && rightGroup.style.flex) rightGroup.style.removeProperty('flex');
 
     let pill = document.getElementById('ag-live-metrics-pill');
-    if (pill && (pill.getAttribute('data-v') !== '3' || pill.classList.contains('ag-pill-middle') || pill.classList.contains('ag-pill-wrapped'))) {
+    if (pill && (pill.classList.contains('ag-pill-middle') || pill.classList.contains('ag-pill-wrapped'))) {
       pill.classList.remove('ag-pill-middle', 'ag-pill-wrapped');
     }
     let isNewPill = false;
-    if (!pill) {
+    let preservedHtml = '';
+    let preservedDisplay = '';
+    if (pill && pill.getAttribute('data-v') !== '4') {
+      const oldText = pill.querySelector('#ag-live-metrics-text');
+      preservedHtml = oldText ? oldText.innerHTML : '';
+      preservedDisplay = pill.style.display || '';
+      const fresh = document.createElement('div');
+      pill.replaceWith(fresh);
+      pill = fresh;
       isNewPill = true;
+    } else if (!pill) {
       pill = document.createElement('div');
+      isNewPill = true;
+    }
+    if (isNewPill) {
       pill.id = 'ag-live-metrics-pill';
-      pill.setAttribute('data-v', '3');
+      pill.setAttribute('data-v', '4');
+      pill.tabIndex = 0;
+      pill.setAttribute('role', 'status');
+      pill.setAttribute('aria-live', 'off');
+      pill.setAttribute('aria-label', 'Session live metrics');
+      pill.setAttribute('aria-describedby', 'ag-live-metrics-tooltip');
       pill.innerHTML = '<span id="ag-live-metrics-text"></span>';
+      if (preservedHtml) {
+        const textNode = pill.querySelector('#ag-live-metrics-text');
+        if (textNode) textNode.innerHTML = preservedHtml;
+      }
+      if (preservedDisplay) {
+        pill.style.display = preservedDisplay;
+      }
       pill.addEventListener('mouseenter', () => {
-        const tt = ensureMetricsTooltip();
-        if (!tt || !tt.innerHTML) return;
-        const r = pill.getBoundingClientRect();
-        const ttWidth = Math.min(440, Math.max(370, tt.offsetWidth || 400));
-        const left = Math.max(12, Math.min(r.left, window.innerWidth - ttWidth - 16));
-        const bottomPx = Math.min(window.innerHeight - r.top + 8, window.innerHeight - (tt.offsetHeight || 220) - 12);
-        tt.style.left = left + 'px';
-        tt.style.bottom = Math.max(8, bottomPx) + 'px';
-        tt.setAttribute('data-visible', '1');
+        if (typeof window.__ag_show_metrics_tooltip === 'function') {
+          window.__ag_show_metrics_tooltip(pill);
+        }
       });
       pill.addEventListener('mouseleave', () => {
-        const tt = document.getElementById('ag-live-metrics-tooltip');
-        if (tt) tt.removeAttribute('data-visible');
+        if (document.activeElement === pill) return;
+        if (typeof window.__ag_hide_metrics_tooltip === 'function') {
+          window.__ag_hide_metrics_tooltip();
+        }
+      });
+      pill.addEventListener('focus', () => {
+        if (typeof window.__ag_show_metrics_tooltip === 'function') {
+          window.__ag_show_metrics_tooltip(pill);
+        }
+      });
+      pill.addEventListener('blur', () => {
+        if (typeof window.__ag_hide_metrics_tooltip === 'function') {
+          window.__ag_hide_metrics_tooltip();
+        }
+      });
+      pill.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' || ev.key === 'Esc') {
+          const tt = document.getElementById('ag-live-metrics-tooltip');
+          if (tt && tt.getAttribute('data-visible') === '1') {
+            ev.stopPropagation();
+            if (typeof window.__ag_hide_metrics_tooltip === 'function') {
+              window.__ag_hide_metrics_tooltip();
+            }
+          }
+        }
       });
     }
 
@@ -504,6 +899,13 @@
 
   window.__ag_ensure_metrics_pill_fn = ensureMetricsPill;
 
+  function resolveMetricsLang() {
+    if (METRICS_LANG === 'zh' || METRICS_LANG === 'en') return METRICS_LANG;
+    if (MODULES.i18n) return 'zh';
+    const docLang = (document.documentElement && document.documentElement.lang) || '';
+    return /^zh\b/i.test(docLang) ? 'zh' : 'en';
+  }
+
   window.__ag_render_metrics = function (payload) {
     try {
       if (!MODULES.metrics) return;
@@ -517,14 +919,29 @@
         if (ttEl) ttEl.removeAttribute('data-visible');
         return;
       }
+      const lang = resolveMetricsLang();
+      const localized = payload.i18n && payload.i18n[lang] ? payload.i18n[lang] : payload;
+      const nextInlineHtml = localized.inlineHtml || payload.inlineHtml || '';
+      const nextTooltipHtml = localized.tooltipHtml || payload.tooltipHtml || '';
+      const nextAriaLabel = lang === 'zh' ? '会话实时遥测指标' : 'Session live metrics';
+      if (pill.getAttribute('aria-label') !== nextAriaLabel) {
+        pill.setAttribute('aria-label', nextAriaLabel);
+      }
+      const ctxState = payload.ctxState || 'ok';
+      if (pill.getAttribute('data-ctx-state') !== ctxState) {
+        pill.setAttribute('data-ctx-state', ctxState);
+      }
+      if (ttEl && ttEl.getAttribute('data-ctx-state') !== ctxState) {
+        ttEl.setAttribute('data-ctx-state', ctxState);
+      }
       const textEl = pill.querySelector('#ag-live-metrics-text');
       let textChanged = false;
-      if (textEl && textEl.innerHTML !== payload.inlineHtml) {
-        textEl.innerHTML = payload.inlineHtml;
+      if (textEl && textEl.innerHTML !== nextInlineHtml) {
+        textEl.innerHTML = nextInlineHtml;
         textChanged = true;
       }
-      if (ttEl && ttEl.innerHTML !== payload.tooltipHtml) {
-        ttEl.innerHTML = payload.tooltipHtml;
+      if (ttEl && ttEl.innerHTML !== nextTooltipHtml) {
+        ttEl.innerHTML = nextTooltipHtml;
       }
       if (pill.style.display !== 'inline-flex') {
         pill.style.display = 'inline-flex';
@@ -533,10 +950,16 @@
       if (textChanged) {
         ensureMetricsPill(true);
       }
+      if (ttEl && ttEl.getAttribute('data-visible') === '1' && typeof window.__ag_show_metrics_tooltip === 'function') {
+        window.__ag_show_metrics_tooltip(pill);
+      }
     } catch (e) {}
   };
 
   window.__ag_update_live_metrics = window.__ag_render_metrics;
+  if (window.__ag_last_metrics && window.__ag_last_metrics.hasData) {
+    window.__ag_render_metrics(window.__ag_last_metrics);
+  }
 
   function checkRouteAndMountMetrics() {
     try {
@@ -970,6 +1393,9 @@
   window.__AG_PATCH_CTX__ = {
     version: PATCH_VERSION,
     preset: DEFAULT_PRESET,
+    get appearance() {
+      return document.documentElement.getAttribute('data-ag-appearance') || 'default';
+    },
     config: boot.config || {},
     modules: MODULES,
     features: MODULES,
