@@ -209,3 +209,27 @@ Agents 整窗在 theme class 变化后重跑 scheme 判定，不再把亮色墨�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: 全壳层与标签页暖色统一及仅默认外观生效改造
+<!-- trellis-session: v=2 fp=bf2e4fc602fbefea -->
+
+**Date**: 2026-11-13
+**Task**: 全壳层与标签页暖色统一及仅默认外观生效改造
+**Branch**: `dev`
+
+### Summary
+
+实现默认外观（Default Light/Dark）下顶栏、左栏、顶部 40px 分栏/Tab 栏、辅助标签胶囊与内嵌卡片全壳层暖色统一；结合 nativeStorage、body[data-agy-home-glow] 与行内三原色种子实现非默认主题（如 Everforest、Legacy Dark 及自定义拾色）0ms 实时让出全部色彩皮肤，同时常驻保留字体、自适应配色的实时指标胶囊、汉化与死锁修复等非颜色增强模块。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `be3e33d` | feat(runtime): 仅在默认外观下挂载色彩预设并实时监听主题切换 |
+| `5774e69` | feat(theme): 统一默认外观全壳层与标签页配色并收敛非默认主题让位 |
+| `0d25ccd` | docs(spec): 同步默认外观色彩门控与全壳层统一规范 |
+
+### Status
+
+[OK] **Completed**

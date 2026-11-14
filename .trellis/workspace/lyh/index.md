@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-11-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~211 | Active |
+| `journal-1.md` | ~235 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-11-13 | 全壳层与标签页暖色统一及仅默认外观生效改造 | `be3e33d`, `5774e69`, `0d25ccd` | `dev` |
 | 8 | 2026-11-13 | 会话指标胶囊动态压缩水位校准、四阶矿物色重塑与中英双语自动跟随 | `6834d8d`, `f5e5241`, `7c13423` | `dev` |
 | 7 | 2026-11-10 | 默认亮色暖纸层次优化完成 | `7d6bdcd` | `dev` |
 | 6 | 2026-11-09 | 停止注入 IDE 并恢复插件 | `f38318d` | `dev` |
