@@ -101,33 +101,81 @@
     } catch (e) {}
   }
 
-  function applyThemeVars(varsObj) {
+  const NON_COLOR_THEME_VARS = new Set(['--ag-chat-font-size']);
+
+  function applyThemeVars(varsObj, allowColorVars = true) {
+    const rawVars = varsObj && typeof varsObj === 'object' ? varsObj : {};
+    const effectiveVars = {};
+    const rawKeys = Object.keys(rawVars);
+    for (let i = 0; i < rawKeys.length; i++) {
+      const k = rawKeys[i];
+      if (allowColorVars || NON_COLOR_THEME_VARS.has(k)) {
+        effectiveVars[k] = rawVars[k];
+      }
+    }
+
+    const styleEl = document.documentElement.style;
     const prevKeys = Array.isArray(window.__ag_applied_theme_vars) ? window.__ag_applied_theme_vars : [];
-    const nextKeys = Object.keys(varsObj || {});
+    const prevValMap =
+      window.__ag_applied_theme_var_values && typeof window.__ag_applied_theme_var_values === 'object'
+        ? window.__ag_applied_theme_var_values
+        : {};
+    const nextKeys = [];
+    const nextValMap = {};
+    let mutatedStyle = false;
+
     for (let i = 0; i < prevKeys.length; i++) {
       const k = prevKeys[i];
-      if (!(k in (varsObj || {}))) {
-        document.documentElement.style.removeProperty(k);
+      if (!(k in effectiveVars)) {
+        const cur = styleEl.getPropertyValue(k).trim();
+        if (cur !== '' && (!(k in prevValMap) || cur === prevValMap[k])) {
+          styleEl.removeProperty(k);
+          mutatedStyle = true;
+        }
       }
     }
-    for (let i = 0; i < nextKeys.length; i++) {
-      const k = nextKeys[i];
-      const v = varsObj[k];
-      if (v !== null && v !== undefined && String(v).trim() !== '') {
-        document.documentElement.style.setProperty(k, String(v).trim());
+
+    const effKeys = Object.keys(effectiveVars);
+    for (let i = 0; i < effKeys.length; i++) {
+      const k = effKeys[i];
+      const v = effectiveVars[k];
+      const trimmed = v !== null && v !== undefined ? String(v).trim() : '';
+      if (trimmed !== '') {
+        if (styleEl.getPropertyValue(k).trim() !== trimmed) {
+          styleEl.setProperty(k, trimmed);
+          mutatedStyle = true;
+        }
+        nextKeys.push(k);
+        nextValMap[k] = trimmed;
       } else {
-        document.documentElement.style.removeProperty(k);
+        const cur = styleEl.getPropertyValue(k).trim();
+        if (cur !== '' && (!(k in prevValMap) || cur === prevValMap[k])) {
+          styleEl.removeProperty(k);
+          mutatedStyle = true;
+        }
       }
     }
-    if (varsObj && varsObj['--ag-chat-font-size']) {
-      document.documentElement.setAttribute('data-ag-custom-font-size', 'true');
-    } else {
+
+    if (effectiveVars['--ag-chat-font-size']) {
+      if (document.documentElement.getAttribute('data-ag-custom-font-size') !== 'true') {
+        document.documentElement.setAttribute('data-ag-custom-font-size', 'true');
+      }
+    } else if (document.documentElement.hasAttribute('data-ag-custom-font-size')) {
       document.documentElement.removeAttribute('data-ag-custom-font-size');
     }
+
     window.__ag_applied_theme_vars = nextKeys;
+    window.__ag_applied_theme_var_values = nextValMap;
+
+    // 同步排空由补丁自身写 style 产生的观察记录，防止 style 监听自触发循环
+    if (mutatedStyle && window.__ag_scheme_observer) {
+      try {
+        window.__ag_scheme_observer.takeRecords();
+      } catch (e) {}
+    }
   }
 
-  // 类名变化要重判 scheme。再次注入和卸载都先断开，避免叠 observer。
+  // 类名与内联外观变量变化要重判 scheme 与默认外观。再次注入和卸载都先断开，避免叠 observer。
   function disconnectSchemeObservers() {
     if (window.__ag_scheme_observer) {
       try {
@@ -141,6 +189,7 @@
       } catch (e) {}
       window.__ag_scheme_body_wait = null;
     }
+    window.__ag_ns_on_patch_fn = null;
   }
 
   // 若用户在 user/config.json 中将 enabled 设为 false，执行无损卸载还原
@@ -175,6 +224,7 @@
     applyThemeVars({});
     disconnectSchemeObservers();
     document.documentElement.removeAttribute('data-ag-preset');
+    document.documentElement.removeAttribute('data-ag-appearance');
     document.documentElement.removeAttribute('data-ag-scheme');
     document.documentElement.removeAttribute('data-ag-page-type');
     document.documentElement.removeAttribute('data-ag-wax-seal');
@@ -221,7 +271,6 @@
     userStyle.remove();
   }
 
-  applyThemeVars(THEME_VARS);
   document.documentElement.setAttribute('data-ag-wax-seal', MODULES.composerWaxSeal === false ? 'off' : 'on');
   const detectedOs =
     boot.platform || (/Win/i.test(navigator.platform || '') ? 'win32' : /Mac/i.test(navigator.platform || '') ? 'darwin' : 'linux');
@@ -297,7 +346,7 @@
   }
 
   // ============================================================================
-  // 3. 专属色彩预设状态联动（支持 user/config.json 热重载切换）与防白屏崩溃保护
+  // 3. 专属色彩预设状态联动（仅在默认 Appearance 下接管主题色，零轮询实时退让非默认主题）
   // ============================================================================
   const PRESETS = {
     HIGH_CONTRAST: 'high-contrast',
@@ -310,6 +359,23 @@
 
   const ALL_CUSTOM_PRESET_NAMES = new Set(Object.values(PRESETS));
 
+  const STOCK_SEEDS = {
+    light: {
+      '--background': new Set(['#ffffff', '#f9f9f9']),
+      '--foreground': new Set(['#0a0a0c', '#000000', '#101010']),
+      '--primary': new Set(['#2f75c3', '#2560a3', '#007acc'])
+    },
+    dark: {
+      '--background': new Set(['#070708', '#050507', '#101010']),
+      '--foreground': new Set(['#ffffff', '#cccccc']),
+      '--primary': new Set(['#2f71e3', '#007acc'])
+    }
+  };
+
+  if (!window.__ag_ns_presets) {
+    window.__ag_ns_presets = Object.create(null);
+  }
+
   // 当用户在 user/config.json 中修改了 preset 时，同步刷新 localStorage 中的 theme-color-flavor
   if (DEFAULT_PRESET && window.__ag_last_boot_preset !== DEFAULT_PRESET) {
     window.__ag_last_boot_preset = DEFAULT_PRESET;
@@ -318,40 +384,7 @@
     } catch (e) {}
   }
 
-  function syncChuanbanPreset() {
-    try {
-      const stored = Storage.prototype.getItem.call(localStorage, 'theme-preset-light');
-      if (ALL_CUSTOM_PRESET_NAMES.has(stored)) {
-        try {
-          Storage.prototype.setItem.call(localStorage, 'theme-preset-light', 'Default Light');
-        } catch (e) {}
-      }
-
-      const flavor =
-        Storage.prototype.getItem.call(localStorage, 'theme-color-flavor') || DEFAULT_PRESET || PRESETS.HIGH_CONTRAST;
-
-      let targetPreset = PRESETS.HIGH_CONTRAST;
-      if (flavor === PRESETS.HIGH_CONTRAST || flavor === PRESETS.LEGACY_WARM_WHITE || flavor === '高对比版') {
-        targetPreset = PRESETS.HIGH_CONTRAST;
-      } else if (
-        flavor === PRESETS.CLAUDE_PUREWHITE ||
-        flavor === PRESETS.LEGACY_OFFICIAL ||
-        flavor === 'ClaudeDesktop 净白'
-      ) {
-        targetPreset = PRESETS.CLAUDE_PUREWHITE;
-      } else if (flavor === PRESETS.VINTAGE_DEEP || flavor === PRESETS.LEGACY_CHUANBAN || flavor === '复古深色') {
-        targetPreset = PRESETS.VINTAGE_DEEP;
-      }
-
-      if (document.documentElement.getAttribute('data-ag-preset') !== targetPreset) {
-        document.documentElement.setAttribute('data-ag-preset', targetPreset);
-      }
-    } catch (e) {}
-    syncChuanbanScheme();
-  }
-
-  function resolveAgScheme() {
-    if (BOOT_SCHEME === 'light' || BOOT_SCHEME === 'dark') return BOOT_SCHEME;
+  function resolveHostScheme() {
     try {
       const hostTheme = new URLSearchParams(window.location.search || '').get('hostTheme');
       if (hostTheme === 'dark' || hostTheme === 'light') return hostTheme;
@@ -367,6 +400,91 @@
     return 'light';
   }
 
+  function resolveAgScheme() {
+    if (BOOT_SCHEME === 'light' || BOOT_SCHEME === 'dark') return BOOT_SCHEME;
+    return resolveHostScheme();
+  }
+
+  function isStockPresetName(name, hostScheme) {
+    if (name === undefined || name === null || name === '' || name === 'Default') return true;
+    if (ALL_CUSTOM_PRESET_NAMES.has(name)) return true;
+    return hostScheme === 'dark' ? name === 'Default Dark' : name === 'Default Light';
+  }
+
+  function isDefaultAppearance(hostScheme) {
+    try {
+      const body = document.body;
+      if (window.top !== window && isAgentPanelWindow() && (!body || !body.hasAttribute('data-agy-theme'))) {
+        return true;
+      }
+      // Legacy Light / Legacy Dark 在 NewUX 下会移除 data-agy-home-glow
+      if (body && body.hasAttribute('data-agy-theme') && !body.hasAttribute('data-agy-home-glow')) {
+        return false;
+      }
+
+      const seedSets = hostScheme === 'dark' ? STOCK_SEEDS.dark : STOCK_SEEDS.light;
+      const seedProps = ['--background', '--foreground', '--primary'];
+      const styleEl = document.documentElement.style;
+      let checkedLiveSeeds = 0;
+
+      for (let i = 0; i < seedProps.length; i++) {
+        const prop = seedProps[i];
+        if (
+          Object.prototype.hasOwnProperty.call(THEME_VARS, prop) &&
+          THEME_VARS[prop] !== null &&
+          THEME_VARS[prop] !== undefined &&
+          String(THEME_VARS[prop]).trim() !== ''
+        ) {
+          continue;
+        }
+        const raw = styleEl.getPropertyValue(prop).trim().toLowerCase();
+        if (!raw || raw.startsWith('var(')) continue;
+        checkedLiveSeeds++;
+        if (!seedSets[prop].has(raw)) {
+          return false;
+        }
+      }
+
+      if (checkedLiveSeeds === 3) {
+        return true;
+      }
+
+      const presetKey = hostScheme === 'dark' ? 'theme-preset-dark' : 'theme-preset-light';
+      let storedPreset;
+      if (window.__ag_ns_presets && presetKey in window.__ag_ns_presets) {
+        storedPreset = window.__ag_ns_presets[presetKey];
+      } else {
+        try {
+          storedPreset = Storage.prototype.getItem.call(localStorage, presetKey);
+        } catch (e) {}
+      }
+      return isStockPresetName(storedPreset, hostScheme);
+    } catch (e) {
+      return true;
+    }
+  }
+
+  function resolveTargetPreset() {
+    let flavor = DEFAULT_PRESET || PRESETS.HIGH_CONTRAST;
+    try {
+      const stored = Storage.prototype.getItem.call(localStorage, 'theme-preset-light');
+      if (ALL_CUSTOM_PRESET_NAMES.has(stored)) {
+        try {
+          Storage.prototype.setItem.call(localStorage, 'theme-preset-light', 'Default Light');
+        } catch (e) {}
+      }
+      flavor = Storage.prototype.getItem.call(localStorage, 'theme-color-flavor') || flavor;
+    } catch (e) {}
+
+    if (flavor === PRESETS.CLAUDE_PUREWHITE || flavor === PRESETS.LEGACY_OFFICIAL || flavor === 'ClaudeDesktop 净白') {
+      return PRESETS.CLAUDE_PUREWHITE;
+    }
+    if (flavor === PRESETS.VINTAGE_DEEP || flavor === PRESETS.LEGACY_CHUANBAN || flavor === '复古深色') {
+      return PRESETS.VINTAGE_DEEP;
+    }
+    return PRESETS.HIGH_CONTRAST;
+  }
+
   function syncChuanbanScheme() {
     try {
       const next = resolveAgScheme();
@@ -376,20 +494,50 @@
     } catch (e) {}
   }
 
+  function syncChuanbanPreset() {
+    try {
+      const hostScheme = resolveHostScheme();
+      const effectiveScheme = BOOT_SCHEME === 'light' || BOOT_SCHEME === 'dark' ? BOOT_SCHEME : hostScheme;
+      if (document.documentElement.getAttribute('data-ag-scheme') !== effectiveScheme) {
+        document.documentElement.setAttribute('data-ag-scheme', effectiveScheme);
+      }
+
+      const isDefault = isDefaultAppearance(hostScheme);
+      const nextAppearance = isDefault ? 'default' : 'custom';
+      if (document.documentElement.getAttribute('data-ag-appearance') !== nextAppearance) {
+        document.documentElement.setAttribute('data-ag-appearance', nextAppearance);
+      }
+
+      if (isDefault) {
+        const targetPreset = resolveTargetPreset();
+        if (document.documentElement.getAttribute('data-ag-preset') !== targetPreset) {
+          document.documentElement.setAttribute('data-ag-preset', targetPreset);
+        }
+        applyThemeVars(THEME_VARS, true);
+      } else {
+        if (document.documentElement.hasAttribute('data-ag-preset')) {
+          document.documentElement.removeAttribute('data-ag-preset');
+        }
+        applyThemeVars(THEME_VARS, false);
+      }
+    } catch (e) {}
+  }
+
   function installSchemeObserver() {
     disconnectSchemeObservers();
     const root = document.documentElement;
     if (!root || typeof MutationObserver !== 'function') return;
     const obs = new MutationObserver(() => {
-      syncChuanbanScheme();
+      syncChuanbanPreset();
     });
     window.__ag_scheme_observer = obs;
     try {
-      obs.observe(root, { attributes: true, attributeFilter: ['class'] });
+      obs.observe(root, { attributes: true, attributeFilter: ['class', 'style'] });
     } catch (e) {}
+    const bodyAttrFilter = ['class', 'data-agy-theme', 'data-agy-home-glow'];
     if (document.body) {
       try {
-        obs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+        obs.observe(document.body, { attributes: true, attributeFilter: bodyAttrFilter });
       } catch (e) {}
       return;
     }
@@ -401,9 +549,9 @@
       if (window.__ag_scheme_body_wait !== wait) return;
       window.__ag_scheme_body_wait = null;
       try {
-        obs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+        obs.observe(document.body, { attributes: true, attributeFilter: bodyAttrFilter });
       } catch (e) {}
-      syncChuanbanScheme();
+      syncChuanbanPreset();
     });
     window.__ag_scheme_body_wait = wait;
     try {
@@ -413,8 +561,65 @@
     }
   }
 
-
   window.__ag_sync_preset_fn = syncChuanbanPreset;
+  window.__ag_ns_on_patch_fn = (patch) => {
+    if (!patch || typeof patch !== 'object') return;
+    let touched = false;
+    if ('theme-preset-light' in patch) {
+      window.__ag_ns_presets['theme-preset-light'] = patch['theme-preset-light'];
+      touched = true;
+    }
+    if ('theme-preset-dark' in patch) {
+      window.__ag_ns_presets['theme-preset-dark'] = patch['theme-preset-dark'];
+      touched = true;
+    }
+    if (touched && typeof window.__ag_sync_preset_fn === 'function') {
+      window.__ag_sync_preset_fn();
+    }
+  };
+
+  if (!window.__ag_ns_hook_installed && window.nativeStorage) {
+    window.__ag_ns_hook_installed = true;
+    try {
+      if (typeof window.nativeStorage.onChanged === 'function') {
+        window.nativeStorage.onChanged((patch) => {
+          if (typeof window.__ag_ns_on_patch_fn === 'function') {
+            window.__ag_ns_on_patch_fn(patch);
+          }
+        });
+      }
+      if (typeof window.nativeStorage.updateItems === 'function') {
+        const origUpdate = window.nativeStorage.updateItems.bind(window.nativeStorage);
+        window.nativeStorage.updateItems = function (patch) {
+          try {
+            if (typeof window.__ag_ns_on_patch_fn === 'function') {
+              window.__ag_ns_on_patch_fn(patch);
+            }
+          } catch (e) {}
+          return origUpdate(patch);
+        };
+      }
+    } catch (e) {}
+  }
+
+  if (window.nativeStorage && typeof window.nativeStorage.getItems === 'function') {
+    try {
+      Promise.resolve(window.nativeStorage.getItems())
+        .then((items) => {
+          if (!items || typeof items !== 'object') return;
+          if ('theme-preset-light' in items) {
+            window.__ag_ns_presets['theme-preset-light'] = items['theme-preset-light'];
+          }
+          if ('theme-preset-dark' in items) {
+            window.__ag_ns_presets['theme-preset-dark'] = items['theme-preset-dark'];
+          }
+          if (typeof window.__ag_sync_preset_fn === 'function') {
+            window.__ag_sync_preset_fn();
+          }
+        })
+        .catch(() => {});
+    } catch (e) {}
+  }
 
   if (!window.__ag_preset_hook_installed) {
     window.__ag_preset_hook_installed = true;
@@ -434,7 +639,12 @@
           val = 'Default Light';
         }
         origSetItem(key, val);
-        if (key === 'theme-preset-light' || key === 'theme-mode' || key === 'theme-color-flavor') {
+        if (
+          key === 'theme-preset-light' ||
+          key === 'theme-preset-dark' ||
+          key === 'theme-mode' ||
+          key === 'theme-color-flavor'
+        ) {
           setTimeout(() => {
             if (typeof window.__ag_sync_preset_fn === 'function') window.__ag_sync_preset_fn();
           }, 50);
@@ -1183,6 +1393,9 @@
   window.__AG_PATCH_CTX__ = {
     version: PATCH_VERSION,
     preset: DEFAULT_PRESET,
+    get appearance() {
+      return document.documentElement.getAttribute('data-ag-appearance') || 'default';
+    },
     config: boot.config || {},
     modules: MODULES,
     features: MODULES,

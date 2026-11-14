@@ -373,8 +373,13 @@ async function inspectLiveWindow(portFileOrEnv, fallbackPort = 9222) {
               hasStyle: !!document.getElementById('ag-custom-fonts'),
               hasUserStyle: !!document.getElementById('antigravity-user-custom-style'),
               preset: document.documentElement.getAttribute('data-ag-preset'),
+              appearance: document.documentElement.getAttribute('data-ag-appearance'),
               scheme: document.documentElement.getAttribute('data-ag-scheme'),
               backgroundColor: getComputedStyle(document.body || document.documentElement).backgroundColor,
+              shellBg: (() => {
+                const el = document.querySelector('[aria-label="Sidebar"], .agy-inset-shell, .bg-sidebar');
+                return el ? getComputedStyle(el).backgroundColor : null;
+              })(),
               composerBg: (() => {
                 const el = document.getElementById('antigravity.agentSidePanelInputBox');
                 return el ? getComputedStyle(el).backgroundColor : null;
