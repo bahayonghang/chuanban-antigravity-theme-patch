@@ -1,14 +1,14 @@
 @font-face {
   font-family: 'Anthropic Serif';
-  src: local('Anthropic Serif Web'), local('Anthropic Serif Web Text Light'), local('Anthropic Serif');
-  font-weight: 300 500;
+  src: local('AnthropicSerifWebWeb-TextRegular'), local('AnthropicSerifWebWeb-TextLight'), local('Anthropic Serif Web'), local('Anthropic Serif Web Text Light'), local('Anthropic Serif Web Display Light'), local('Anthropic Serif'), local('Anthropic Serif Text'), local('Anthropic Serif Text Regular'), local('AnthropicSerifText-Regular');
+  font-weight: 300 599;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
   font-family: 'Anthropic Serif';
-  src: local('Anthropic Serif Bold'), local('Anthropic Serif Web Bold');
+  src: local('AnthropicSerifWebWeb-TextSemibold'), local('AnthropicSerifWebWeb-TextBold'), local('Anthropic Serif Bold'), local('Anthropic Serif Web Bold'), local('Anthropic Serif Text Bold'), local('AnthropicSerifText-Bold'), local('Anthropic Serif Web Display Light'), local('AnthropicSerifWebWeb-TextRegular'), local('AnthropicSerifWebWeb-TextLight'), local('Anthropic Serif Web Text Light');
   font-weight: 600 900;
   font-style: normal;
   font-display: swap;
@@ -16,15 +16,15 @@
 
 @font-face {
   font-family: 'Anthropic Sans';
-  src: local('Anthropic Sans Web'), local('Anthropic Sans Web Text'), local('Anthropic Sans');
-  font-weight: 300 500;
+  src: local('AnthropicSansWebVariable-TextRegular'), local('Anthropic Sans Web Text Regular'), local('AnthropicSansWebVariable-TextLight'), local('Anthropic Sans Web'), local('Anthropic Sans Web Text'), local('Anthropic Sans Web Display Light'), local('Anthropic Sans'), local('Anthropic Sans Text'), local('Anthropic Sans Text Regular'), local('AnthropicSansText-Regular');
+  font-weight: 300 599;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
   font-family: 'Anthropic Sans';
-  src: local('Anthropic Sans Bold'), local('Anthropic Sans Web Bold');
+  src: local('AnthropicSansWebVariable-TextSemibold'), local('AnthropicSansWebVariable-TextBold'), local('Anthropic Sans Bold'), local('Anthropic Sans Web Bold'), local('Anthropic Sans Text Bold'), local('AnthropicSansText-Bold'), local('Anthropic Sans Web Display Light'), local('Anthropic Sans Web Text Regular'), local('AnthropicSansWebVariable-TextRegular');
   font-weight: 600 900;
   font-style: normal;
   font-display: swap;
@@ -32,19 +32,23 @@
 
 @font-face {
   font-family: 'Anthropic Mono';
-  src: local('Anthropic Mono Web'), local('Anthropic Mono');
+  src: local('AnthropicMonoWebWeb-Regular'), local('Anthropic Mono Web Regular'), local('Anthropic Mono Web'), local('Anthropic Mono');
   font-weight: 400 700;
   font-style: normal;
   font-display: swap;
 }
 
-:root, body, body[data-agy-font], body[data-agy-font="google-sans"], body[data-agy-font="inter"] {
+:root, body, body[data-agy-font], body[data-agy-font="google-sans"], body[data-agy-font="inter"], .pdf-sdk-root {
   --vscode-font-family: 'Anthropic Sans', 'Anthropic Sans Web', 'Anthropic Sans Web Text', 'anthropic-sans', 'Styrene B', 'Styrene', system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif !important;
   --editor-font-family: 'Anthropic Mono', 'Anthropic Mono Web', 'anthropic-mono', 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
   --font-sans: 'Anthropic Sans', 'Anthropic Sans Web', 'Anthropic Sans Web Text', 'anthropic-sans', 'Styrene B', 'Styrene', system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif !important;
   --font-mono: 'Anthropic Mono', 'Anthropic Mono Web', 'anthropic-mono', 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
   --default-font-family: var(--font-sans) !important;
+  --font-family: var(--font-sans) !important;
+  --sdk-font-family: var(--font-sans) !important;
+  --sdk-comment-font-family: var(--font-sans) !important;
   --default-mono-font-family: var(--font-mono) !important;
+  --sdk-font-family-mono: var(--font-mono) !important;
   /* 恢复标准字重级阶，对齐稳定版（彻底消除 Insiders 强制引入的 250/350/450 细字重缺陷） */
   --font-weight-light: 300 !important;
   --font-weight-normal: 400 !important;
@@ -58,66 +62,90 @@
 /* 字体目录：放在上面的 Anthropic !important 之后。html+body 选择器压过 body[data-agy-font="google-sans"]。原生下拉不控制这两层。 */
 html[data-ag-font-ui="wenyuan-serif"],
 html[data-ag-font-ui="wenyuan-serif"] body,
-html[data-ag-font-ui="wenyuan-serif"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+html[data-ag-font-ui="wenyuan-serif"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]),
+html[data-ag-font-ui="wenyuan-serif"] .pdf-sdk-root {
   --font-sans: 'WenYuan Serif SC', system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', serif !important;
   --vscode-font-family: var(--font-sans) !important;
   --default-font-family: var(--font-sans) !important;
+  --font-family: var(--font-sans) !important;
+  --sdk-font-family: var(--font-sans) !important;
+  --sdk-comment-font-family: var(--font-sans) !important;
 }
 
 html[data-ag-font-ui="wenyuan-sans"],
 html[data-ag-font-ui="wenyuan-sans"] body,
-html[data-ag-font-ui="wenyuan-sans"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+html[data-ag-font-ui="wenyuan-sans"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]),
+html[data-ag-font-ui="wenyuan-sans"] .pdf-sdk-root {
   --font-sans: 'WenYuan Sans SC', system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif !important;
   --vscode-font-family: var(--font-sans) !important;
   --default-font-family: var(--font-sans) !important;
+  --font-family: var(--font-sans) !important;
+  --sdk-font-family: var(--font-sans) !important;
+  --sdk-comment-font-family: var(--font-sans) !important;
 }
 
 html[data-ag-font-ui="anthropic"],
 html[data-ag-font-ui="anthropic"] body,
-html[data-ag-font-ui="anthropic"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+html[data-ag-font-ui="anthropic"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]),
+html[data-ag-font-ui="anthropic"] .pdf-sdk-root {
   --font-sans: 'Anthropic Sans', 'Anthropic Sans Web', 'Anthropic Sans Web Text', 'anthropic-sans', 'Styrene B', 'Styrene', system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif !important;
   --vscode-font-family: var(--font-sans) !important;
   --default-font-family: var(--font-sans) !important;
+  --font-family: var(--font-sans) !important;
+  --sdk-font-family: var(--font-sans) !important;
+  --sdk-comment-font-family: var(--font-sans) !important;
 }
 
 html[data-ag-font-ui="system"],
 html[data-ag-font-ui="system"] body,
-html[data-ag-font-ui="system"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+html[data-ag-font-ui="system"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]),
+html[data-ag-font-ui="system"] .pdf-sdk-root {
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Sarasa UI SC', '更纱黑体 UI SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif !important;
   --vscode-font-family: var(--font-sans) !important;
   --default-font-family: var(--font-sans) !important;
+  --font-family: var(--font-sans) !important;
+  --sdk-font-family: var(--font-sans) !important;
+  --sdk-comment-font-family: var(--font-sans) !important;
 }
 
 html[data-ag-font-code="maple-bright"],
 html[data-ag-font-code="maple-bright"] body,
-html[data-ag-font-code="maple-bright"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+html[data-ag-font-code="maple-bright"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]),
+html[data-ag-font-code="maple-bright"] .pdf-sdk-root {
   --font-mono: 'MapleBright', 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
   --editor-font-family: var(--font-mono) !important;
   --default-mono-font-family: var(--font-mono) !important;
+  --sdk-font-family-mono: var(--font-mono) !important;
 }
 
 html[data-ag-font-code="maple-mono"],
 html[data-ag-font-code="maple-mono"] body,
-html[data-ag-font-code="maple-mono"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+html[data-ag-font-code="maple-mono"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]),
+html[data-ag-font-code="maple-mono"] .pdf-sdk-root {
   --font-mono: 'Maple Mono NF CN', 'Maple Mono', 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
   --editor-font-family: var(--font-mono) !important;
   --default-mono-font-family: var(--font-mono) !important;
+  --sdk-font-family-mono: var(--font-mono) !important;
 }
 
 html[data-ag-font-code="anthropic"],
 html[data-ag-font-code="anthropic"] body,
-html[data-ag-font-code="anthropic"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+html[data-ag-font-code="anthropic"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]),
+html[data-ag-font-code="anthropic"] .pdf-sdk-root {
   --font-mono: 'Anthropic Mono', 'Anthropic Mono Web', 'anthropic-mono', 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
   --editor-font-family: var(--font-mono) !important;
   --default-mono-font-family: var(--font-mono) !important;
+  --sdk-font-family-mono: var(--font-mono) !important;
 }
 
 html[data-ag-font-code="sarasa"],
 html[data-ag-font-code="sarasa"] body,
-html[data-ag-font-code="sarasa"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]) {
+html[data-ag-font-code="sarasa"] body:is([data-agy-font], [data-agy-font="google-sans"], [data-agy-font="inter"]),
+html[data-ag-font-code="sarasa"] .pdf-sdk-root {
   --font-mono: 'Sarasa Mono Slab SC', '等距更纱黑体 Slab SC', 'Anthropic Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace !important;
   --editor-font-family: var(--font-mono) !important;
   --default-mono-font-family: var(--font-mono) !important;
+  --sdk-font-family-mono: var(--font-mono) !important;
 }
 
 /* 基础全局字重与平滑度：保证无衬线体基底扎实、对齐稳定版 400 */
@@ -132,7 +160,7 @@ html, body, body[data-agy-font], button, select, nav, header, aside {
 }
 
 /* 2. 对话正文与 Markdown：跟外观字体，不再写死 Anthropic Serif */
-.select-text, .prose, .markdown, article, .select-text :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, strong, em, span, div) {
+[data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .select-text, .prose, .markdown, article, :is([data-markdown-root], .select-text) :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, strong, em, span, div) {
   font-family: var(--font-sans) !important;
   letter-spacing: -0.003em;
 }
@@ -147,7 +175,7 @@ code, pre, kbd, samp, .font-mono, [class*="language-"], .monaco-editor, .xterm, 
 }
 
 /* 4. 输入框编辑区：跟代码字体，不再写死更纱 Slab */
-div[contenteditable="true"], textarea, div[contenteditable="true"] :is(p, span, div), [data-composer], .ProseMirror, .ProseMirror :is(p, span) {
+div[contenteditable="true"], textarea, div[contenteditable="true"] :is(p, span, div), [data-lexical-editor="true"], [data-lexical-editor="true"] :is(p, span, div), [data-lexical-editor="true"] ~ p.pointer-events-none, [data-composer], .ProseMirror, .ProseMirror :is(p, span) {
   font-family: var(--font-mono) !important;
 }
 
@@ -366,12 +394,12 @@ html[data-ag-preset][data-ag-scheme="dark"] {
 }
 
 /* 7.5 默认外观下全壳层（顶栏 + 左栏 + 顶部 40px 分栏/Tab 栏 + 内嵌圆角卡片 + 辅助面板胶囊）统一铺底 */
-html[data-ag-preset] body {
+html[data-ag-preset] body:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) {
   background-color: var(--background) !important;
   color: var(--foreground) !important;
 }
 
-html[data-ag-preset] :is(.agy-shell, .agy-inset-shell, .bg-sidebar) {
+html[data-ag-preset] :is(.agy-shell, .agy-inset-shell, .bg-sidebar):not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not(.browser-hole-ancestor) {
   --shell-canvas: var(--shell) !important;
   background-color: var(--sidebar) !important;
 }
@@ -1194,4 +1222,65 @@ html[data-ag-preset][data-ag-wax-seal="off"] :is(#antigravity\.agentSidePanelInp
   border-width: 1px !important;
   border-color: color-mix(in srgb, var(--ag-ink-soft) 15%, transparent) !important;
   box-shadow: none !important;
+}
+
+/* Windows DirectWrite 可变字体命名实例修正：Windows 版 AnthropicSerif TTF 仅暴露 TextLight (wght=300) 实例名，显式驱动 wght 轴还原 400 正文/斜体、500 中黑与 600 粗体/粗斜体 */
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is([data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .select-text, .prose, .markdown, article),
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is([data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .select-text, .prose, .markdown, article) :is(i, em, .italic) {
+  font-variation-settings: 'wght' 400, 'opsz' 16 !important;
+}
+
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is([data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .select-text, .prose, .markdown, article) .font-medium,
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is([data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .select-text, .prose, .markdown, article) .font-medium :is(i, em, .italic) {
+  font-weight: 500 !important;
+  font-variation-settings: 'wght' 500, 'opsz' 16 !important;
+}
+
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is([data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .select-text, .prose, .markdown, article) :is(strong, b, h1, h2, h3, h4, h5, h6, th, .font-semibold, .font-bold),
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is([data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .select-text, .prose, .markdown, article) :is(strong, b, h1, h2, h3, h4, h5, h6, th, .font-semibold, .font-bold) :is(i, em, .italic),
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"][data-ag-page-type="plugin"] :where(h1, h2, h3, h4, h5, h6, b, strong, .swarm-title, .o2 .o2-h, .o2-goal > b, .o2-lb b, .o2-cb b, .o2-tht b) {
+  font-weight: 600 !important;
+  font-variation-settings: 'wght' 600, 'opsz' 16 !important;
+}
+
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is(code, pre, kbd, samp, .font-mono, [class*="language-"], .monaco-editor, .xterm),
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is(code, pre, kbd, samp, .font-mono, [class*="language-"], .monaco-editor, .xterm) *,
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is([data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .select-text, .prose, .markdown, article) :is(code, pre, kbd, samp, .font-mono, [class*="language-"]),
+html[data-ag-os="win32"][data-ag-font-ui="anthropic"] :is([data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .select-text, .prose, .markdown, article) :is(code, pre, kbd, samp, .font-mono, [class*="language-"]) :is(*, strong, b, i, em, .italic, .font-medium, .font-semibold, .font-bold) {
+  font-variation-settings: normal !important;
+}
+
+
+/* 新版子 Agent 汇总与远程统计提示沿用本地指标色阶。 */
+#ag-live-metrics-pill .ag-sub-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 9.5px !important;
+  font-weight: 600 !important;
+  background-color: var(--ag-metric-cmp-bg);
+  color: var(--ag-metric-accent) !important;
+}
+#ag-live-metrics-pill .ag-zh-warn-dot {
+  color: var(--ag-metric-warn) !important;
+  font-size: 9px !important;
+}
+#ag-live-metrics-tooltip .ag-tt-warn {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background-color: var(--ag-metric-warn-bg);
+  border: 1px solid var(--ag-metric-pill-border-warn);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#ag-live-metrics-tooltip .ag-tt-warn-lbl {
+  color: var(--ag-metric-warn) !important;
+}
+#ag-live-metrics-tooltip .ag-tt-warn-val {
+  color: var(--ag-metric-value-sec) !important;
+  font-size: 10px !important;
+  line-height: 1.4 !important;
 }

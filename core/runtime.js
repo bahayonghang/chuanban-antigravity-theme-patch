@@ -4,6 +4,12 @@
  * 由 core/daemon.mjs 读取并将文件末尾的启动载荷占位符替换为实时配置与资源对象。
  */
 ((boot) => {
+  // 0. 顶层窗口隔离：仅允许主窗口与官方内置 Swarm 协作侧栏插件帧（绝不注入 Artifact / HTML 预览等子 iframe）
+  const IS_SWARM_PLUGIN_FRAME = !!(
+    window.location &&
+    ((window.location.protocol === 'plugin:' && /^swarm--/i.test(window.location.hostname || '')) ||
+      /^plugin:\/\/swarm--/i.test(String(window.location.href || '')))
+  );
   // 非顶层只放行本机 Agent 面板。Artifact / HTML 预览等子 iframe 仍不注入。
   const isAgentPanelWindow = () => {
     try {
@@ -16,10 +22,12 @@
       return false;
     }
   };
-  if (window.top !== window && !isAgentPanelWindow()) return;
+  if (window.top !== window && !isAgentPanelWindow() && !IS_SWARM_PLUGIN_FRAME) return;
   if (!boot || typeof boot !== 'object') return;
 
-  const PATCH_VERSION = boot.version || '20261104-v5.0.0';
+  const PATCH_VERSION = boot.version || '20261115-v5.3.0';
+  const DETECTED_OS =
+    boot.platform || (/Win/i.test(navigator.platform || '') ? 'win32' : /Mac/i.test(navigator.platform || '') ? 'darwin' : 'linux');
   const ENABLED = boot.enabled !== false;
   const CSS_TEXT = boot.cssText || '';
   const CUSTOM_CSS_TEXT = boot.customCss || '';
@@ -34,6 +42,8 @@
       metrics: true,
       composerWaxSeal: true,
       deadlockHealer: true,
+      coldBootHealer: true,
+      zoomShortcuts: true,
       customCss: true,
       customJs: true
     },
@@ -50,6 +60,9 @@
   const rawFontConfig = boot.fonts && typeof boot.fonts === 'object' && !Array.isArray(boot.fonts) ? boot.fonts : {};
   const FONT_UI = UI_FONT_IDS.indexOf(rawFontConfig.ui) !== -1 ? rawFontConfig.ui : 'wenyuan-serif';
   const FONT_CODE = CODE_FONT_IDS.indexOf(rawFontConfig.code) !== -1 ? rawFontConfig.code : 'maple-bright';
+  const DEFAULT_EXCLUDE_I18N =
+    'code, pre, kbd, samp, textarea, input, style, script, noscript, [contenteditable="true"], [data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-testid="conversation-row-sidebar"] a[href^="/c/"], [data-testid="conversation-row-sidebar"] span.truncate, [data-testid="conversation-navigator-turn"], .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title, #ag-live-metrics-pill, #ag-live-metrics-tooltip';
+
   const SELECTORS = Object.assign(
     {
       inputBoxId: 'antigravity.agentSidePanelInputBox',
@@ -61,6 +74,35 @@
     },
     boot.selectors || {}
   );
+
+  // 执行上一轮 user/custom.js 或内部注册的生命周期清理函数（防止热重载或卸载逃逸）
+  if (Array.isArray(window.__ag_cleanup_fns) && window.__ag_cleanup_fns.length > 0) {
+    const prevCleanups = window.__ag_cleanup_fns.splice(0, window.__ag_cleanup_fns.length);
+    for (let i = 0; i < prevCleanups.length; i++) {
+      try {
+        if (typeof prevCleanups[i] === 'function') prevCleanups[i]();
+      } catch (e) {}
+    }
+  }
+  window.__ag_cleanup_fns = [];
+  if (window.__ag_dcl_handler) {
+    try {
+      window.removeEventListener('DOMContentLoaded', window.__ag_dcl_handler);
+    } catch (e) {}
+    window.__ag_dcl_handler = null;
+  }
+  if (window.__ag_user_231_observer) {
+    try {
+      window.__ag_user_231_observer.disconnect();
+    } catch (e) {}
+    window.__ag_user_231_observer = null;
+  }
+  if (window.__ag_coldboot_timer) {
+    try {
+      clearTimeout(window.__ag_coldboot_timer);
+    } catch (e) {}
+    window.__ag_coldboot_timer = null;
+  }
 
   // 全局持久化的原始英文文本映射表（支持 i18n.override.json 热重载增删改与一键还原）
   if (!window.__ag_orig_text_map) {
@@ -75,28 +117,38 @@
       while (walker.nextNode()) {
         const node = walker.currentNode;
         const rec = origTextMap.get(node);
-        if (rec && node.nodeValue === rec.lastVal) {
-          node.nodeValue = rec.origRaw;
+        if (rec) {
+          if (node.nodeValue === rec.lastVal) {
+            node.nodeValue = rec.origRaw;
+          }
           origTextMap.delete(node);
         }
       }
+      const attrNames = ['title', 'placeholder', 'aria-label'];
       const attrEls = root.querySelectorAll
-        ? root.querySelectorAll('[data-ag-orig-title], [data-ag-orig-placeholder], [data-ag-orig-aria-label]')
+        ? root.querySelectorAll(
+            '[data-ag-orig-title], [data-ag-orig-title-last], [data-ag-orig-placeholder], [data-ag-orig-placeholder-last], [data-ag-orig-aria-label], [data-ag-orig-aria-label-last]'
+          )
         : [];
       for (let i = 0; i < attrEls.length; i++) {
         const el = attrEls[i];
-        if (el.hasAttribute('data-ag-orig-title')) {
-          el.setAttribute('title', el.getAttribute('data-ag-orig-title'));
-          el.removeAttribute('data-ag-orig-title');
+        for (let j = 0; j < attrNames.length; j++) {
+          const attr = attrNames[j];
+          const origAttr = 'data-ag-orig-' + attr;
+          const lastAttr = origAttr + '-last';
+          if (el.hasAttribute(origAttr) || el.hasAttribute(lastAttr)) {
+            const savedOrig = el.getAttribute(origAttr);
+            const savedLast = el.getAttribute(lastAttr);
+            const cur = el.getAttribute(attr);
+            if (savedOrig !== null && (savedLast === null || cur === savedLast)) {
+              el.setAttribute(attr, savedOrig);
+            }
+            el.removeAttribute(origAttr);
+            el.removeAttribute(lastAttr);
+            delete el['__ag_attr_ver_' + attr];
+          }
         }
-        if (el.hasAttribute('data-ag-orig-placeholder')) {
-          el.setAttribute('placeholder', el.getAttribute('data-ag-orig-placeholder'));
-          el.removeAttribute('data-ag-orig-placeholder');
-        }
-        if (el.hasAttribute('data-ag-orig-aria-label')) {
-          el.setAttribute('aria-label', el.getAttribute('data-ag-orig-aria-label'));
-          el.removeAttribute('data-ag-orig-aria-label');
-        }
+        delete el.__ag_attr_ver;
       }
     } catch (e) {}
   }
@@ -192,6 +244,154 @@
     window.__ag_ns_on_patch_fn = null;
   }
 
+  // Antigravity 2.31.2+ BaseWindow + curtainView 底色同步与宿主内联色彩亮度解析
+  function parseColorToRgb(rawColor, requireOpaque = false) {
+    const s = String(rawColor || '').trim();
+    if (!s) return null;
+    if (/^#[0-9a-fA-F]{6}$/.test(s)) {
+      return [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)];
+    }
+    if (/^#[0-9a-fA-F]{3}$/.test(s)) {
+      return [parseInt(s[1] + s[1], 16), parseInt(s[2] + s[2], 16), parseInt(s[3] + s[3], 16)];
+    }
+    const mRgb = s.match(/^rgba?\(\s*([\d.]+%?)\s*[,\s]\s*([\d.]+%?)\s*[,\s]\s*([\d.]+%?)(?:\s*[,/]\s*([\d.%]+))?\s*\)$/i);
+    if (mRgb) {
+      if (mRgb[4] !== undefined) {
+        const a = mRgb[4].endsWith('%') ? parseFloat(mRgb[4]) / 100 : parseFloat(mRgb[4]);
+        if (!Number.isFinite(a) || (requireOpaque && a < 1)) return null;
+      }
+      const c255 = (v) =>
+        Math.max(0, Math.min(255, Math.round(v.endsWith('%') ? parseFloat(v) * 2.55 : Number(v))));
+      return [c255(mRgb[1]), c255(mRgb[2]), c255(mRgb[3])];
+    }
+    const mSrgb = s.match(/^color\(\s*srgb\s+([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+%?)(?:\s*\/\s*([\d.%]+))?\s*\)$/i);
+    if (mSrgb) {
+      if (mSrgb[4] !== undefined) {
+        const a = mSrgb[4].endsWith('%') ? parseFloat(mSrgb[4]) / 100 : parseFloat(mSrgb[4]);
+        if (!Number.isFinite(a) || (requireOpaque && a < 1)) return null;
+      }
+      const f255 = (v) =>
+        Math.max(0, Math.min(255, Math.round(v.endsWith('%') ? parseFloat(v) * 2.55 : parseFloat(v) * 255)));
+      return [f255(mSrgb[1]), f255(mSrgb[2]), f255(mSrgb[3])];
+    }
+    return null;
+  }
+
+  function parseColorToHex6(rawColor) {
+    const rgb = parseColorToRgb(rawColor, true);
+    if (!rgb) return null;
+    const h2 = (v) => v.toString(16).padStart(2, '0');
+    return ('#' + h2(rgb[0]) + h2(rgb[1]) + h2(rgb[2])).toUpperCase();
+  }
+
+  function computeColorLuminance(rawColor) {
+    const rgb = parseColorToRgb(rawColor, false);
+    if (!rgb) return null;
+    return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+  }
+
+  let colorProbeCanvasCtx = null;
+  function parseCssColorViaCanvasHex6(rawColor) {
+    if (!rawColor || typeof document === 'undefined') return null;
+    try {
+      if (!colorProbeCanvasCtx) {
+        const c = document.createElement('canvas');
+        c.width = 1;
+        c.height = 1;
+        colorProbeCanvasCtx = c.getContext('2d', { willReadFrequently: true });
+      }
+      if (!colorProbeCanvasCtx) return null;
+      colorProbeCanvasCtx.clearRect(0, 0, 1, 1);
+      colorProbeCanvasCtx.fillStyle = 'rgba(0, 0, 0, 0)';
+      colorProbeCanvasCtx.fillStyle = rawColor;
+      colorProbeCanvasCtx.fillRect(0, 0, 1, 1);
+      const d = colorProbeCanvasCtx.getImageData(0, 0, 1, 1).data;
+      if (!d || d[3] < 242) return null;
+      const h2 = (v) => v.toString(16).padStart(2, '0');
+      return ('#' + h2(d[0]) + h2(d[1]) + h2(d[2])).toUpperCase();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function resolveCssColorToHex6(propName, targetEl, fallbackHex) {
+    try {
+      const el = targetEl || document.body || document.documentElement;
+      if (!el || typeof getComputedStyle !== 'function') return fallbackHex;
+      const cs = getComputedStyle(el);
+      let cur = (cs.getPropertyValue(propName) || '').trim();
+      let hex = parseColorToHex6(cur);
+      for (let depth = 0; depth < 4 && !hex && cur && cur.includes('var('); depth++) {
+        cur = cur
+          .replace(/var\(\s*(--[A-Za-z0-9_-]+)(?:\s*,\s*([^)]+))?\s*\)/g, (_, vName, fb) => {
+            return (cs.getPropertyValue(vName) || fb || '').trim();
+          })
+          .trim();
+        hex = parseColorToHex6(cur);
+      }
+      if (!hex && cur && !cur.includes('var(')) {
+        hex = parseCssColorViaCanvasHex6(cur);
+      }
+      if (!hex && cur) {
+        const host = document.head || document.documentElement;
+        if (host) {
+          const probe = document.createElement('span');
+          probe.style.cssText =
+            'position:fixed!important;left:-9999px!important;top:-9999px!important;pointer-events:none!important;display:none!important;';
+          probe.style.setProperty('color', cur.includes('var(') ? `var(${propName})` : cur, 'important');
+          host.appendChild(probe);
+          try {
+            const resolved = getComputedStyle(probe).color;
+            hex = parseColorToHex6(resolved) || parseCssColorViaCanvasHex6(resolved);
+          } finally {
+            probe.remove();
+          }
+        }
+      }
+      return hex || fallbackHex;
+    } catch (e) {
+      return fallbackHex;
+    }
+  }
+
+  function syncWinTitleBarOverlay(isDark, force = false, customFallbacks = null) {
+    if (IS_SWARM_PLUGIN_FRAME || DETECTED_OS !== 'win32') return;
+    try {
+      const setOverlay = window.electronNative?.setTitleBarOverlay;
+      if (typeof setOverlay !== 'function') return;
+      const targetEl = document.body || document.documentElement;
+      if (!targetEl || typeof getComputedStyle !== 'function') return;
+      const fbBg = (customFallbacks && customFallbacks.bg) || (isDark ? '#111114' : '#F7F5F0');
+      const fbFg = (customFallbacks && customFallbacks.fg) || (isDark ? '#FAFAFA' : '#1F1E1D');
+      const bgHex = resolveCssColorToHex6('--sidebar', targetEl, fbBg);
+      const fgHex = resolveCssColorToHex6('--foreground', targetEl, fbFg);
+      const sig = bgHex + '|' + fgHex;
+      if (force || window.__ag_last_overlay_sig !== sig) {
+        window.__ag_last_overlay_sig = sig;
+        Promise.resolve(setOverlay({ color: bgHex, symbolColor: fgHex })).catch(() => {});
+      }
+    } catch (e) {}
+  }
+
+  function syncCurtainSurfaceColor(force = false) {
+    if (IS_SWARM_PLUGIN_FRAME) return;
+    try {
+      const setThemeColor = window.electronNative?.wcvBrowser?.setThemeColor;
+      if (typeof setThemeColor !== 'function') return;
+      const targetEl = document.body || document.documentElement;
+      if (!targetEl || typeof getComputedStyle !== 'function') return;
+      const cs = getComputedStyle(targetEl);
+      let hex = resolveCssColorToHex6('--background', targetEl, null);
+      if (!hex) {
+        hex = parseColorToHex6(cs.backgroundColor);
+      }
+      if (hex && (force || window.__ag_last_curtain_hex !== hex)) {
+        window.__ag_last_curtain_hex = hex;
+        Promise.resolve(setThemeColor(hex)).catch(() => {});
+      }
+    } catch (e) {}
+  }
+
   // 若用户在 user/config.json 中将 enabled 设为 false，执行无损卸载还原
   if (!ENABLED) {
     const s1 = document.getElementById('ag-custom-fonts');
@@ -208,11 +408,11 @@
       } catch (e) {}
       window.__ag_i18n_observer = null;
     }
-    if (window.__ag_metrics_route_watcher) {
+    if (window.__ag_user_231_observer) {
       try {
-        clearInterval(window.__ag_metrics_route_watcher);
+        window.__ag_user_231_observer.disconnect();
       } catch (e) {}
-      window.__ag_metrics_route_watcher = null;
+      window.__ag_user_231_observer = null;
     }
     if (window.__ag_metrics_ro) {
       try {
@@ -220,7 +420,44 @@
       } catch (e) {}
       window.__ag_metrics_ro = null;
       window.__ag_metrics_ro_target = null;
+      window.__ag_metrics_ro_observed = null;
+      window.__ag_last_metrics_layout_sig = '';
     }
+    if (window.__ag_metrics_route_watcher) {
+      try {
+        clearInterval(window.__ag_metrics_route_watcher);
+      } catch (e) {}
+      window.__ag_metrics_route_watcher = null;
+    }
+    if (window.__ag_theme_mode_observer) {
+      try {
+        window.__ag_theme_mode_observer.disconnect();
+      } catch (e) {}
+      window.__ag_theme_mode_observer = null;
+    }
+    if (window.__ag_mql_cleanup) {
+      try {
+        window.__ag_mql_cleanup();
+      } catch (e) {}
+      window.__ag_mql_cleanup = null;
+    }
+    if (window.__ag_zoom_timer) {
+      try {
+        clearTimeout(window.__ag_zoom_timer);
+      } catch (e) {}
+      window.__ag_zoom_timer = null;
+    }
+    if (window.__ag_self_zoom_timer) {
+      try {
+        clearTimeout(window.__ag_self_zoom_timer);
+      } catch (e) {}
+      window.__ag_self_zoom_timer = null;
+    }
+    window.__ag_self_zooming = false;
+    window.__ag_zoom_keydown_fn = null;
+    window.__ag_zoom_resize_fn = null;
+    window.__ag_settings_click_fn = null;
+    window.__ag_body_ready = false;
     applyThemeVars({});
     disconnectSchemeObservers();
     document.documentElement.removeAttribute('data-ag-preset');
@@ -230,7 +467,61 @@
     document.documentElement.removeAttribute('data-ag-wax-seal');
     document.documentElement.removeAttribute('data-ag-font-ui');
     document.documentElement.removeAttribute('data-ag-font-code');
+    document.documentElement.removeAttribute('data-ag-theme-mode');
+    document.documentElement.removeAttribute('data-ag-os');
+    const restoreNativeSurfaces = () => {
+      syncCurtainSurfaceColor(true);
+      if (!IS_SWARM_PLUGIN_FRAME) {
+        const hEl = document.documentElement;
+        const bEl = document.body;
+        const sysDark = !!(
+          typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches
+        );
+        const hDataTheme = hEl ? hEl.getAttribute('data-theme') : null;
+        const bHydrated = !!(bEl && (bEl.hasAttribute('data-agy-theme') || bEl.hasAttribute('data-newux-theme')));
+        let nativeDark = false;
+        if (
+          hDataTheme === 'dark' ||
+          (bEl && (bEl.classList.contains('dark') || bEl.classList.contains('theme-dark') || bEl.classList.contains('dark-theme')))
+        ) {
+          nativeDark = true;
+        } else if (
+          hDataTheme === 'light' ||
+          (bEl && (bEl.classList.contains('theme-light') || bEl.classList.contains('light-theme') || bEl.classList.contains('light')))
+        ) {
+          nativeDark = false;
+        } else if (hEl && hEl.style.colorScheme === 'dark') {
+          nativeDark = true;
+        } else if (hEl && hEl.style.colorScheme === 'light') {
+          nativeDark = false;
+        } else if (bHydrated) {
+          nativeDark = false;
+        } else if (boot.hostThemeMode === 'dark') {
+          nativeDark = true;
+        } else if (boot.hostThemeMode === 'light') {
+          nativeDark = false;
+        } else {
+          nativeDark = sysDark;
+        }
+        syncWinTitleBarOverlay(nativeDark, true, {
+          bg: nativeDark ? '#131313' : '#FAFAFA',
+          fg: nativeDark ? '#FAFAFA' : '#383A42'
+        });
+      }
+    };
     restoreAllTranslations(document.body);
+    restoreNativeSurfaces();
+    if (!document.body && typeof document.addEventListener === 'function') {
+      if (window.__ag_disabled_dcl_fn) {
+        document.removeEventListener('DOMContentLoaded', window.__ag_disabled_dcl_fn);
+      }
+      window.__ag_disabled_dcl_fn = () => {
+        window.__ag_disabled_dcl_fn = null;
+        restoreAllTranslations(document.body);
+        restoreNativeSurfaces();
+      };
+      document.addEventListener('DOMContentLoaded', window.__ag_disabled_dcl_fn, { once: true });
+    }
     window.__ag_patch_version = PATCH_VERSION + '-disabled';
     return;
   }
@@ -241,9 +532,13 @@
   if (document.documentElement.getAttribute('data-ag-font-code') !== FONT_CODE) {
     document.documentElement.setAttribute('data-ag-font-code', FONT_CODE);
   }
+  if (window.__ag_disabled_dcl_fn && typeof document.removeEventListener === 'function') {
+    document.removeEventListener('DOMContentLoaded', window.__ag_disabled_dcl_fn);
+    window.__ag_disabled_dcl_fn = null;
+  }
 
   // ============================================================================
-  // 1. 注入更纱黑体与主题样式（#ag-custom-fonts 与独立 #antigravity-user-custom-style）
+  // 1. 注入更纱黑体与主题样式（#ag-custom-fonts -> #ag-user-theme-vars -> #antigravity-user-custom-style）
   // ============================================================================
   const headTarget = document.head || document.getElementsByTagName('head')[0] || document.documentElement;
 
@@ -256,6 +551,11 @@
   if (style && style.textContent !== CSS_TEXT) {
     style.textContent = CSS_TEXT;
   }
+
+  document.documentElement.setAttribute('data-ag-wax-seal', MODULES.composerWaxSeal === false ? 'off' : 'on');
+  const detectedOs = DETECTED_OS;
+  document.documentElement.setAttribute('data-ag-os', detectedOs);
+  applyThemeVars(THEME_VARS);
 
   let userStyle = document.getElementById('antigravity-user-custom-style');
   if (MODULES.customCss && CUSTOM_CSS_TEXT.trim()) {
@@ -271,16 +571,38 @@
     userStyle.remove();
   }
 
-  document.documentElement.setAttribute('data-ag-wax-seal', MODULES.composerWaxSeal === false ? 'off' : 'on');
-  const detectedOs =
-    boot.platform || (/Win/i.test(navigator.platform || '') ? 'win32' : /Mac/i.test(navigator.platform || '') ? 'darwin' : 'linux');
-  document.documentElement.setAttribute('data-ag-os', detectedOs);
+  function ensureStylesAtEndOfHead() {
+    const h = document.head || document.getElementsByTagName('head')[0];
+    if (!h) return;
+    const base = document.getElementById('ag-custom-fonts');
+    if (!base) return;
+    let needsMove = base.parentNode !== h;
+    if (!needsMove) {
+      for (let sib = base.nextElementSibling; sib; sib = sib.nextElementSibling) {
+        if (
+          sib.id !== 'ag-user-theme-vars' &&
+          sib.id !== 'antigravity-user-custom-style' &&
+          (sib.tagName === 'LINK' || sib.tagName === 'STYLE')
+        ) {
+          needsMove = true;
+          break;
+        }
+      }
+    }
+    if (needsMove) {
+      for (const id of ['ag-custom-fonts', 'ag-user-theme-vars', 'antigravity-user-custom-style']) {
+        const el = document.getElementById(id);
+        if (el) h.appendChild(el);
+      }
+    }
+  }
+  ensureStylesAtEndOfHead();
 
   // ============================================================================
   // 2. 防死锁守护：Antigravity 原生 TanStack Router 缺陷修复（支持热重载更新回调）
   // ============================================================================
   window.__ag_settings_click_fn = (e) => {
-    if (MODULES.deadlockHealer === false) return;
+    if (IS_SWARM_PLUGIN_FRAME || MODULES.deadlockHealer === false) return;
     const btn = e.target && e.target.closest && e.target.closest('[data-testid="settings-button"]');
     if (!btn) return;
 
@@ -309,31 +631,440 @@
   }
 
   // ============================================================================
-  // 2.1 缩放快捷键原生缺陷修复（macOS: Cmd + -/=/0，Windows/Linux: Ctrl + -/=/0）
+  // 2.05 冷启动内嵌兜底包漂移安全自愈（HEAD ETag 零流量比对 + 六重空输入/零交互安全门禁）
   // ============================================================================
-  window.__ag_zoom_keydown_fn = (e) => {
-    if (MODULES.deadlockHealer === false) return;
-    const isMac = detectedOs === 'darwin';
-    const modKey = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
-    if (modKey && !e.altKey) {
-      if (!e.shiftKey && (e.key === '-' || e.code === 'Minus' || e.code === 'NumpadSubtract' || e.keyCode === 189)) {
-        e.preventDefault();
-        e.stopPropagation();
-        window.electronNative?.zoomOut?.();
-      } else if (e.key === '=' || e.key === '+' || e.code === 'Equal' || e.code === 'NumpadAdd' || e.keyCode === 187) {
-        e.preventDefault();
-        e.stopPropagation();
-        window.electronNative?.zoomIn?.();
-      } else if (!e.shiftKey && (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0' || e.keyCode === 48)) {
-        e.preventDefault();
-        e.stopPropagation();
-        window.electronNative?.zoomReset?.();
+  if (
+    !IS_SWARM_PLUGIN_FRAME &&
+    window.top === window &&
+    MODULES.deadlockHealer !== false &&
+    MODULES.coldBootHealer !== false &&
+    /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(String(window.location.origin || ''))
+  ) {
+    const markUserDirty = () => {
+      window.__ag_user_interacted_dirty = true;
+      if (window.__ag_coldboot_timer) {
+        try {
+          clearTimeout(window.__ag_coldboot_timer);
+        } catch (e) {}
+        window.__ag_coldboot_timer = null;
+      }
+    };
+
+    if (!window.__ag_user_dirty_guard_installed) {
+      window.__ag_user_dirty_guard_installed = true;
+      const PURE_MOD_KEYS = new Set(['Meta', 'Control', 'Alt', 'Shift', 'CapsLock', 'NumLock', 'ScrollLock', 'Fn']);
+      document.addEventListener(
+        'keydown',
+        (e) => {
+          const k = String(e.key || '');
+          if (PURE_MOD_KEYS.has(k)) return;
+          if ((e.metaKey || e.ctrlKey) && !e.altKey && (k === '-' || k === '_' || k === '=' || k === '+' || k === '0')) {
+            return;
+          }
+          markUserDirty();
+        },
+        { capture: true, passive: true }
+      );
+      for (const evtName of ['paste', 'drop', 'compositionstart', 'input']) {
+        document.addEventListener(evtName, markUserDirty, { capture: true, passive: true });
       }
     }
+
+    const readSessionHealedFlag = () => {
+      try {
+        return window.sessionStorage.getItem('__ag_coldboot_bundle_healed') === '1';
+      } catch (e) {
+        return true;
+      }
+    };
+
+    const isWindowUntouchedAndIdleForColdHeal = () => {
+      if (!ENABLED || MODULES.deadlockHealer === false || MODULES.coldBootHealer === false) return false;
+      if (window.__ag_user_interacted_dirty) return false;
+      if (typeof performance === 'undefined' || typeof performance.now !== 'function' || performance.now() >= 25000) {
+        return false;
+      }
+      if (readSessionHealedFlag()) return false;
+      if (
+        document.querySelector(
+          '[role="dialog"], [data-testid="input-cancel-button"], [data-testid*="running-"], button[aria-label="Stop execution"], button[aria-label="停止执行"], button[aria-label*="Cancel ("], button[aria-label*="取消生成"]'
+        )
+      ) {
+        return false;
+      }
+      const editableList = document.querySelectorAll(
+        '[data-lexical-editor="true"], [contenteditable="true"], textarea, input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"])'
+      );
+      for (let i = 0; i < editableList.length; i++) {
+        const el = editableList[i];
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+          if (el.tagName === 'INPUT') {
+            const itype = String(el.type || '').toLowerCase();
+            if (
+              itype === 'hidden' ||
+              itype === 'checkbox' ||
+              itype === 'radio' ||
+              itype === 'range' ||
+              itype === 'color' ||
+              itype === 'button' ||
+              itype === 'submit' ||
+              itype === 'reset' ||
+              itype === 'file'
+            ) {
+              continue;
+            }
+          }
+          if (String(el.value || '').trim() !== '') return false;
+        } else {
+          const txt = String(el.textContent || '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+          if (txt !== '') return false;
+        }
+      }
+      return true;
+    };
+
+    const probeColdBootBundleDrift = async (attempt) => {
+      window.__ag_coldboot_timer = null;
+      if (!isWindowUntouchedAndIdleForColdHeal()) {
+        window.__ag_coldboot_probe_done = true;
+        window.__ag_coldboot_healer_state = { probeDone: true, drifted: false, skippedReason: 'gate-blocked' };
+        return;
+      }
+      try {
+        const entries =
+          typeof performance.getEntriesByType === 'function'
+            ? performance.getEntriesByType('resource').filter((e) => /\/main\.js(?:\?|$)/.test(String(e.name || '')))
+            : [];
+        const mainEntry = entries.length > 0 ? entries[entries.length - 1] : null;
+        const loadedDecoded = Number(mainEntry && mainEntry.decodedBodySize) || 0;
+        const loadedEncoded = Number(mainEntry && mainEntry.encodedBodySize) || 0;
+        if (loadedDecoded <= 0 && loadedEncoded <= 0) {
+          window.__ag_coldboot_probe_done = true;
+          window.__ag_coldboot_healer_state = { probeDone: true, drifted: false, skippedReason: 'no-perf-entry' };
+          return;
+        }
+
+        const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+        const abortTimer = ctrl ? setTimeout(() => ctrl.abort(), 2500) : null;
+        let res = null;
+        try {
+          res = await fetch('/main.js', {
+            method: 'HEAD',
+            cache: 'no-store',
+            signal: ctrl ? ctrl.signal : undefined
+          });
+        } finally {
+          if (abortTimer) clearTimeout(abortTimer);
+        }
+        if (!res || !res.ok) {
+          window.__ag_coldboot_probe_done = true;
+          window.__ag_coldboot_healer_state = { probeDone: true, drifted: false, skippedReason: 'head-failed' };
+          return;
+        }
+
+        const etag = String(res.headers.get('etag') || '').trim();
+        const mEtag = etag.match(/^(?:W\/)?"([0-9a-f]+)-[0-9a-f]+"$/i);
+        const serverDecoded = mEtag ? parseInt(mEtag[1], 16) : 0;
+        const serverEncoded = Number(res.headers.get('content-length')) || 0;
+
+        let hasDrift = false;
+        if (serverDecoded > 0 && loadedDecoded > 0) {
+          hasDrift = Math.abs(serverDecoded - loadedDecoded) > 1024;
+        } else if (serverEncoded > 0 && loadedEncoded > 0) {
+          hasDrift = Math.abs(serverEncoded - loadedEncoded) > 1024;
+        }
+
+        if (!isWindowUntouchedAndIdleForColdHeal()) {
+          window.__ag_coldboot_probe_done = true;
+          window.__ag_coldboot_healer_state = {
+            probeDone: true,
+            loadedDecoded,
+            serverDecoded,
+            drifted: hasDrift,
+            skippedReason: 'dirty-after-head'
+          };
+          return;
+        }
+
+        if (hasDrift) {
+          window.__ag_coldboot_probe_done = true;
+          window.__ag_coldboot_healer_state = {
+            probeDone: true,
+            loadedDecoded,
+            serverDecoded,
+            drifted: true,
+            healed: true
+          };
+          try {
+            window.sessionStorage.setItem('__ag_coldboot_bundle_healed', '1');
+          } catch (e) {
+            return;
+          }
+          const driftTag = `decoded:${loadedDecoded}->${serverDecoded || serverEncoded}`;
+          if (typeof window.__agRequestHardReload === 'function') {
+            try {
+              window.__agRequestHardReload(driftTag);
+            } catch (e) {}
+          }
+          window.__ag_coldboot_timer = setTimeout(() => {
+            window.__ag_coldboot_timer = null;
+            if (!window.__ag_user_interacted_dirty) {
+              window.location.reload();
+            }
+          }, 280);
+          return;
+        }
+
+        const hasRemoteTrigger = !!document.querySelector(
+          '[data-testid="project-selector-this-machine-trigger"], [data-testid="location-selector-trigger"]'
+        );
+        if (attempt === 1 && !hasRemoteTrigger && performance.now() < 16000) {
+          window.__ag_coldboot_healer_state = {
+            probeDone: false,
+            attempt: 1,
+            loadedDecoded,
+            serverDecoded,
+            drifted: false
+          };
+          window.__ag_coldboot_timer = setTimeout(() => {
+            probeColdBootBundleDrift(2);
+          }, 5500);
+          return;
+        }
+
+        window.__ag_coldboot_probe_done = true;
+        window.__ag_coldboot_healer_state = {
+          probeDone: true,
+          attempt,
+          loadedDecoded,
+          serverDecoded,
+          drifted: false
+        };
+      } catch (e) {
+        window.__ag_coldboot_probe_done = true;
+        window.__ag_coldboot_healer_state = { probeDone: true, drifted: false, skippedReason: 'exception' };
+      }
+    };
+
+    if (!window.__ag_coldboot_probe_done && isWindowUntouchedAndIdleForColdHeal() && performance.now() < 20000) {
+      const delayMs = Math.max(1500, Math.round(5800 - Math.min(4300, performance.now())));
+      window.__ag_coldboot_healer_state = { armed: true, delayMs, probeDone: false };
+      window.__ag_coldboot_timer = setTimeout(() => {
+        probeColdBootBundleDrift(1);
+      }, delayMs);
+    } else if (!window.__ag_coldboot_healer_state) {
+      window.__ag_coldboot_healer_state = {
+        armed: false,
+        probeDone: true,
+        skippedReason: performance.now() >= 20000 ? 'warm-window' : 'gate-blocked'
+      };
+    }
+  }
+
+  // ============================================================================
+  // 2.1 缩放快捷键修复与 2.31.2 原生菜单快捷键防双倍缩放保护（兼容 Numpad、欧式键盘与 Windows BaseWindow）
+  // ============================================================================
+  try {
+    const initZoom = window.electronNative?.getZoomLevel?.();
+    if (typeof initZoom === 'number' && typeof window.__ag_settled_zoom !== 'number') {
+      window.__ag_settled_zoom = initZoom;
+    }
+  } catch (e) {}
+
+  window.__ag_zoom_resize_fn = () => {
+    const native = window.electronNative;
+    if (!native || typeof native.getZoomLevel !== 'function') return;
+    try {
+      const cur = native.getZoomLevel();
+      if (typeof cur === 'number') {
+        if (window.__ag_self_zooming) {
+          window.__ag_settled_zoom = cur;
+          return;
+        }
+        if (typeof window.__ag_settled_zoom === 'number' && Math.abs(cur - window.__ag_settled_zoom) > 0.003) {
+          window.__ag_last_ext_zoom_ts = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        }
+        window.__ag_settled_zoom = cur;
+      }
+    } catch (e) {}
+  };
+
+  window.__ag_zoom_keydown_fn = (e) => {
+    if (MODULES.zoomShortcuts === false || MODULES.deadlockHealer === false) return;
+    if (e.isComposing) return;
+    const isMac = detectedOs === 'darwin';
+    const modKey = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+    if (!modKey || e.altKey) return;
+
+    const k = String(e.key || '');
+    const isCjkImeKey =
+      k === 'Process' || k === 'Unidentified' || /[\uFF00-\uFFEF\u3000-\u303F]/.test(k);
+
+    let action = null;
+    if (
+      k === '-' ||
+      k === '_' ||
+      e.code === 'NumpadSubtract' ||
+      (!e.shiftKey && e.code === 'Minus' && isCjkImeKey)
+    ) {
+      action = 'out';
+    } else if (
+      k === '=' ||
+      k === '+' ||
+      e.code === 'NumpadAdd' ||
+      (e.code === 'Equal' && isCjkImeKey)
+    ) {
+      action = 'in';
+    } else if (!e.shiftKey && (k === '0' || e.code === 'Numpad0' || (e.code === 'Digit0' && isCjkImeKey))) {
+      action = 'reset';
+    }
+    if (!action) return;
+
+    // Swarm 子帧内：当 e.key 非宿主 sidecar-key-event 直接识别的 '+'/'='/'-'/'0'（如 Numpad0 'Insert'、'_'、中文输入法 'Process'/全角符号）时归一化转发
+    if (IS_SWARM_PLUGIN_FRAME) {
+      if (k !== '+' && k !== '=' && k !== '-' && k !== '0' && window.parent && window.parent !== window) {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          window.parent.postMessage(
+            {
+              type: 'sidecar-key-event',
+              payload: {
+                eventType: 'keydown',
+                key: action === 'in' ? '=' : action === 'out' ? '-' : '0',
+                code: e.code,
+                ctrlKey: !!e.ctrlKey,
+                metaKey: !!e.metaKey,
+                shiftKey: action === 'reset' ? false : !!e.shiftKey,
+                altKey: false,
+                repeat: !!e.repeat
+              }
+            },
+            '*'
+          );
+        } catch (err) {}
+      }
+      return;
+    }
+
+    const native = window.electronNative;
+    if (!native) return;
+
+    const actionFn =
+      action === 'out'
+        ? native.zoomOut
+        : action === 'in'
+        ? native.zoomIn
+        : typeof native.resetZoom === 'function'
+        ? native.resetZoom
+        : native.zoomReset;
+    if (typeof actionFn !== 'function') return;
+
+    const nowTs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const curFactor = typeof native.getZoomLevel === 'function' ? native.getZoomLevel() : null;
+    const settledBefore = typeof window.__ag_settled_zoom === 'number' ? window.__ag_settled_zoom : curFactor;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // 若原生菜单加速器已在 keydown 到达渲染进程前刚完成缩放（macOS NSMenu），直接同步状态并跳过补触发
+    if (
+      !window.__ag_self_zooming &&
+      ((typeof curFactor === 'number' && typeof settledBefore === 'number' && Math.abs(curFactor - settledBefore) > 0.003) ||
+        nowTs - (window.__ag_last_ext_zoom_ts || 0) < (isMac ? 80 : 40))
+    ) {
+      if (typeof curFactor === 'number') window.__ag_settled_zoom = curFactor;
+      return;
+    }
+
+    // preload.js 中 getZoomLevel() 底层为 webFrame.getZoomFactor()，100% 原始大小恒为 1.0
+    if (action === 'reset' && typeof curFactor === 'number' && Math.abs(curFactor - 1) < 0.005) {
+      return;
+    }
+
+    const markSelfZoomWindow = (ms) => {
+      window.__ag_self_zooming = true;
+      if (window.__ag_self_zoom_timer) clearTimeout(window.__ag_self_zoom_timer);
+      window.__ag_self_zoom_timer = setTimeout(() => {
+        window.__ag_self_zoom_timer = null;
+        try {
+          const latest = typeof native.getZoomLevel === 'function' ? native.getZoomLevel() : null;
+          if (typeof latest === 'number') window.__ag_settled_zoom = latest;
+        } catch (err) {}
+        window.__ag_self_zooming = false;
+      }, ms);
+    };
+
+    const runZoomAction = () => {
+      markSelfZoomWindow(250);
+      try {
+        const ret = actionFn.call(native);
+        const syncNext = typeof native.getZoomLevel === 'function' ? native.getZoomLevel() : null;
+        if (
+          typeof syncNext === 'number' &&
+          (typeof curFactor !== 'number' || Math.abs(syncNext - curFactor) > 0.003)
+        ) {
+          window.__ag_settled_zoom = syncNext;
+        }
+        if (ret && typeof ret.then === 'function') {
+          ret.then(
+            () => {
+              try {
+                const asyncNext = typeof native.getZoomLevel === 'function' ? native.getZoomLevel() : null;
+                if (typeof asyncNext === 'number') window.__ag_settled_zoom = asyncNext;
+              } catch (err) {}
+              markSelfZoomWindow(80);
+            },
+            () => {
+              markSelfZoomWindow(40);
+            }
+          );
+        }
+      } catch (err) {
+        markSelfZoomWindow(40);
+      }
+    };
+
+    // Windows / Linux 无 NSMenu 加速器竞态，且 macOS 原生菜单未绑定小键盘与 '_'：零延迟即时执行，确保长按连发 (e.repeat) 丝滑不吞键
+    if (!isMac || String(e.code || '').startsWith('Numpad') || k === '_') {
+      runZoomAction();
+      return;
+    }
+
+    // macOS 保留 60ms NSMenu 防双倍缩放观察窗口
+    if (window.__ag_zoom_timer) {
+      clearTimeout(window.__ag_zoom_timer);
+      window.__ag_zoom_timer = null;
+    }
+
+    window.__ag_zoom_timer = setTimeout(() => {
+      window.__ag_zoom_timer = null;
+      try {
+        const afterFactor = typeof native.getZoomLevel === 'function' ? native.getZoomLevel() : null;
+        if (
+          !window.__ag_self_zooming &&
+          ((typeof curFactor === 'number' && typeof afterFactor === 'number' && Math.abs(afterFactor - curFactor) > 0.003) ||
+            (typeof performance !== 'undefined' ? performance.now() : Date.now()) - (window.__ag_last_ext_zoom_ts || 0) < 80)
+        ) {
+          if (typeof afterFactor === 'number') window.__ag_settled_zoom = afterFactor;
+          return;
+        }
+        runZoomAction();
+      } catch (err) {}
+    }, 60);
   };
 
   if (!window.__ag_zoom_guard_installed) {
     window.__ag_zoom_guard_installed = true;
+    window.addEventListener(
+      'resize',
+      () => {
+        if (typeof window.__ag_zoom_resize_fn === 'function') {
+          window.__ag_zoom_resize_fn();
+        }
+      },
+      { passive: true }
+    );
     window.addEventListener(
       'keydown',
       (e) => {
@@ -391,6 +1122,13 @@
     } catch (e) {}
     const body = document.body;
     const root = document.documentElement;
+    if (IS_SWARM_PLUGIN_FRAME) {
+      const lum = computeColorLuminance(root.style.getPropertyValue('--background'));
+      if (lum !== null) return lum < 0.5 ? 'dark' : 'light';
+      if (boot.hostThemeMode === 'dark' || boot.hostThemeMode === 'light') return boot.hostThemeMode;
+    }
+    if (root.getAttribute('data-theme') === 'dark' || (body && body.classList.contains('dark'))) return 'dark';
+    if (root.getAttribute('data-theme') === 'light' || (body && body.classList.contains('light'))) return 'light';
     if ((body && body.classList.contains('theme-dark')) || root.classList.contains('theme-dark')) return 'dark';
     if ((body && body.classList.contains('theme-light')) || root.classList.contains('theme-light')) return 'light';
     try {
@@ -520,6 +1258,8 @@
         }
         applyThemeVars(THEME_VARS, false);
       }
+      syncWinTitleBarOverlay(effectiveScheme === 'dark');
+      syncCurtainSurfaceColor();
     } catch (e) {}
   }
 
@@ -532,7 +1272,7 @@
     });
     window.__ag_scheme_observer = obs;
     try {
-      obs.observe(root, { attributes: true, attributeFilter: ['class', 'style'] });
+      obs.observe(root, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] });
     } catch (e) {}
     const bodyAttrFilter = ['class', 'data-agy-theme', 'data-agy-home-glow'];
     if (document.body) {
@@ -659,9 +1399,10 @@
 
   // ============================================================================
   // 3.5 模型名称同行实时指标胶囊 (Scheme C: TPS · TTFT · Ctx/256k · Out + Hover 详情卡)
-  // 严格保证「左(模型) - 中(指标胶囊) - 右(模式与发送)」三栏结构；中间过窄(<150px)时物理跳至下方第二行。
+  // 常规宽度恒定锁定同行(middle)；仅窄侧边栏(<165px，恢复>=180px滞回)折入框内第二行(bottom)。
   // ============================================================================
-  const MIDDLE_MIN_WIDTH_PX = 150;
+  const MIDDLE_ENTER_BOTTOM_PX = 165;
+  const MIDDLE_EXIT_BOTTOM_PX = 180;
 
   function extractCascadeId() {
     try {
@@ -717,14 +1458,23 @@
 
   function findFooterRow(box) {
     if (!box) return null;
+    const directFooter = box.querySelector('.agy-composer-footer');
+    if (directFooter && directFooter.children.length >= 2) {
+      return directFooter;
+    }
     const rows = box.querySelectorAll('div.flex.w-full.items-center.justify-between');
     for (let i = rows.length - 1; i >= 0; i--) {
       const r = rows[i];
+      if (r.getAttribute('data-testid') === 'input-box-bottom-toolbar') continue;
       if (r.querySelector('[data-testid="model-selector-trigger"], [data-testid="send-button"]')) {
         return r;
       }
     }
-    return rows[rows.length - 1] || null;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (r.getAttribute('data-testid') !== 'input-box-bottom-toolbar') return r;
+    }
+    return directFooter || null;
   }
 
   function measureNaturalLeftWidth(leftGroup) {
@@ -738,17 +1488,74 @@
     return w;
   }
 
-  function ensureMetricsPill(forceLayout = false) {
-    // 清理旧版残留的 ResizeObserver，防止新旧 Observer 互相抢夺 DOM 节点引发高度震荡
-    if (window.__ag_pill_resize_observer) {
-      try {
-        window.__ag_pill_resize_observer.disconnect();
-      } catch (e) {}
-      window.__ag_pill_resize_observer = null;
+  function syncMetricsResizeObserver(bottomRow, leftGroup, rightGroup) {
+    if (typeof ResizeObserver === 'undefined' || !bottomRow) return;
+    if (window.__ag_metrics_ro_target !== bottomRow || window.__ag_metrics_ro_ver !== PATCH_VERSION) {
+      if (window.__ag_metrics_ro) {
+        try {
+          window.__ag_metrics_ro.disconnect();
+        } catch (e) {}
+      }
+      window.__ag_metrics_ro_target = bottomRow;
+      window.__ag_metrics_ro_ver = PATCH_VERSION;
+      window.__ag_metrics_ro_observed = new WeakSet();
+      window.__ag_last_metrics_layout_sig = '';
+      window.__ag_metrics_ro = new ResizeObserver(() => {
+        if (window.__ag_metrics_raf) return;
+        window.__ag_metrics_raf = requestAnimationFrame(() => {
+          window.__ag_metrics_raf = 0;
+          const curBox = document.getElementById(SELECTORS.inputBoxId);
+          const curBottom = findFooterRow(curBox);
+          if (!curBottom || !curBottom.children[0]) return;
+          const curLeft = curBottom.children[0];
+          const curRight = curBottom.children[1] || null;
+          const rw = curBottom.clientWidth || 0;
+          if (rw <= 0) return;
+          const lw = measureNaturalLeftWidth(curLeft);
+          const rgw = curRight ? curRight.offsetWidth || 0 : 0;
+          const sig = rw + ':' + lw + ':' + rgw;
+          if (sig !== window.__ag_last_metrics_layout_sig) {
+            if (typeof window.__ag_ensure_metrics_pill_fn === 'function') {
+              window.__ag_ensure_metrics_pill_fn(true);
+            }
+          }
+        });
+      });
     }
+    const ro = window.__ag_metrics_ro;
+    const seen = window.__ag_metrics_ro_observed;
+    if (!ro || !seen) return;
+    const observeOnce = (el) => {
+      if (el && el.nodeType === 1 && !seen.has(el)) {
+        seen.add(el);
+        try {
+          ro.observe(el);
+        } catch (e) {}
+      }
+    };
+    observeOnce(bottomRow);
+    if (rightGroup) observeOnce(rightGroup);
+    if (leftGroup) {
+      for (let i = 0; i < leftGroup.children.length; i++) {
+        const ch = leftGroup.children[i];
+        if (ch.id !== 'ag-live-metrics-pill') observeOnce(ch);
+      }
+    }
+  }
+
+  function ensureMetricsPill(forceLayout = false, resetHysteresis = false) {
     if (!MODULES.metrics) {
       const existing = document.getElementById('ag-live-metrics-pill');
       if (existing) existing.style.display = 'none';
+      if (window.__ag_metrics_ro) {
+        try {
+          window.__ag_metrics_ro.disconnect();
+        } catch (e) {}
+        window.__ag_metrics_ro = null;
+        window.__ag_metrics_ro_target = null;
+        window.__ag_metrics_ro_observed = null;
+        window.__ag_last_metrics_layout_sig = '';
+      }
       return null;
     }
     const box = document.getElementById(SELECTORS.inputBoxId);
@@ -757,13 +1564,6 @@
     if (!bottomRow || !bottomRow.children[0]) return null;
     const leftGroup = bottomRow.children[0];
     const rightGroup = bottomRow.children[1] || null;
-
-    // 清理旧版残留类名与内联 flex 样式
-    if (bottomRow.classList.contains('ag-footer-row-wrap')) {
-      bottomRow.classList.remove('ag-footer-row-wrap');
-    }
-    if (leftGroup.style.flex) leftGroup.style.removeProperty('flex');
-    if (rightGroup && rightGroup.style.flex) rightGroup.style.removeProperty('flex');
 
     let pill = document.getElementById('ag-live-metrics-pill');
     if (pill && (pill.classList.contains('ag-pill-middle') || pill.classList.contains('ag-pill-wrapped'))) {
@@ -834,46 +1634,27 @@
       });
     }
 
-    if (
-      typeof ResizeObserver !== 'undefined' &&
-      (window.__ag_metrics_ro_target !== bottomRow || window.__ag_metrics_ro_ver !== PATCH_VERSION)
-    ) {
-      if (window.__ag_metrics_ro) {
-        try {
-          window.__ag_metrics_ro.disconnect();
-        } catch (e) {}
-      }
-      window.__ag_metrics_ro_target = bottomRow;
-      window.__ag_metrics_ro_ver = PATCH_VERSION;
-      window.__ag_last_row_width = -1;
-      window.__ag_metrics_ro = new ResizeObserver(() => {
-        if (window.__ag_metrics_raf) return;
-        window.__ag_metrics_raf = requestAnimationFrame(() => {
-          window.__ag_metrics_raf = 0;
-          const w = bottomRow.clientWidth || 0;
-          if (w > 0 && Math.abs(w - (window.__ag_last_row_width || 0)) >= 1) {
-            window.__ag_last_row_width = w;
-            if (typeof window.__ag_ensure_metrics_pill_fn === 'function') {
-              window.__ag_ensure_metrics_pill_fn(true);
-            }
-          }
-        });
-      });
-      window.__ag_metrics_ro.observe(bottomRow);
-    }
+    syncMetricsResizeObserver(bottomRow, leftGroup, rightGroup);
+
+    const rowW = bottomRow.clientWidth || 0;
+    if (rowW <= 0) return pill;
+    const leftW = measureNaturalLeftWidth(leftGroup);
+    const rightW = rightGroup ? rightGroup.offsetWidth || 0 : 0;
+    const curLayoutSig = rowW + ':' + leftW + ':' + rightW;
 
     const isMountedHere =
       pill.parentElement === leftGroup || (bottomRow.parentElement && pill.parentElement === bottomRow.parentElement);
-    if (!forceLayout && !isNewPill && isMountedHere) {
+    if (!forceLayout && !isNewPill && isMountedHere && window.__ag_last_metrics_layout_sig === curLayoutSig) {
       return pill;
     }
 
-    const rowW = bottomRow.clientWidth || 0;
+    window.__ag_last_metrics_layout_sig = curLayoutSig;
     window.__ag_last_row_width = rowW;
-    const leftW = measureNaturalLeftWidth(leftGroup);
-    const rightW = rightGroup ? rightGroup.offsetWidth || 0 : 0;
-    const availMiddleW = rowW - leftW - rightW - 14;
-    const useBottomRow = rowW > 0 && availMiddleW < MIDDLE_MIN_WIDTH_PX;
+    const availMiddleW = rowW - leftW - rightW - 8;
+
+    const prevMode = resetHysteresis ? 'middle' : pill.getAttribute('data-ag-row-mode') || 'middle';
+    const useBottomRow =
+      prevMode === 'bottom' ? availMiddleW < MIDDLE_EXIT_BOTTOM_PX : availMiddleW < MIDDLE_ENTER_BOTTOM_PX;
     const rowMode = useBottomRow ? 'bottom' : 'middle';
 
     if (bottomRow.getAttribute('data-ag-row-mode') !== rowMode) {
@@ -963,20 +1744,20 @@
 
   function checkRouteAndMountMetrics() {
     try {
+      if (IS_SWARM_PLUGIN_FRAME) {
+        if (document.documentElement.getAttribute('data-ag-page-type') !== 'plugin') {
+          document.documentElement.setAttribute('data-ag-page-type', 'plugin');
+        }
+        return;
+      }
       if (document.hidden) return;
-      const box = document.getElementById(SELECTORS.inputBoxId);
-      const hasBranchPillInBox = !!(box && box.querySelector(SELECTORS.branchPillInBox));
-      const isHome =
-        hasBranchPillInBox ||
-        !!document.querySelector(SELECTORS.homeGreeting) ||
-        window.location.pathname === '/' ||
-        !window.location.pathname.startsWith('/c/');
+      const pathname = window.location.pathname;
+      const isChatRoute = pathname.startsWith('/c/');
+      const cid = extractCascadeId();
+      const isHome = pathname === '/' || (!isChatRoute && !cid) || (!isChatRoute && !!document.querySelector(SELECTORS.homeGreeting));
       const pageType = isHome ? 'home' : 'chat';
       if (document.documentElement.getAttribute('data-ag-page-type') !== pageType) {
         document.documentElement.setAttribute('data-ag-page-type', pageType);
-      }
-      if (document.body && document.body.hasAttribute('data-ag-page-type')) {
-        document.body.removeAttribute('data-ag-page-type');
       }
 
       if (!MODULES.metrics) {
@@ -985,7 +1766,6 @@
         return;
       }
 
-      const cid = extractCascadeId();
       if (!cid) {
         window.__ag_watched_cascade_id = '';
         const pill = document.getElementById('ag-live-metrics-pill');
@@ -999,18 +1779,14 @@
 
       if (cid !== window.__ag_watched_cascade_id) {
         window.__ag_watched_cascade_id = cid;
-        const pill = document.getElementById('ag-live-metrics-pill');
+        window.__ag_last_metrics_layout_sig = '';
+        const pill = ensureMetricsPill(true, true);
         if (pill && (!window.__ag_last_metrics || window.__ag_last_metrics.cascadeId !== cid)) {
           pill.style.display = 'none';
         }
         if (typeof window.__agRequestMetrics === 'function') {
           try {
             window.__agRequestMetrics(cid);
-          } catch (e) {}
-        }
-        if (typeof window.__ag_on_session_change === 'function') {
-          try {
-            window.__ag_on_session_change(cid);
           } catch (e) {}
         }
       } else if (window.__ag_last_metrics && window.__ag_last_metrics.cascadeId === cid) {
@@ -1022,7 +1798,7 @@
     } catch (e) {}
   }
 
-  if (!window.__ag_history_hook_installed) {
+  if (!IS_SWARM_PLUGIN_FRAME && !window.__ag_history_hook_installed) {
     window.__ag_history_hook_installed = true;
     const triggerRouteCheck = () => {
       requestAnimationFrame(() => {
@@ -1061,11 +1837,15 @@
     } catch (e) {}
     window.__ag_metrics_route_watcher = null;
   }
-  window.__ag_metrics_route_watcher = setInterval(checkRouteAndMountMetrics, 1500);
-  checkRouteAndMountMetrics();
+  if (!IS_SWARM_PLUGIN_FRAME) {
+    window.__ag_metrics_route_watcher = setInterval(checkRouteAndMountMetrics, 3000);
+  }
+  if (document.body || IS_SWARM_PLUGIN_FRAME) {
+    checkRouteAndMountMetrics();
+  }
 
   // ============================================================================
-  // 4. 高性能界面汉化引擎（无原型词典 + WeakMap 热重载还原 + 单遍扫描 + 首字符分流）
+  // 4. 高性能界面汉化引擎（无原型词典 + WeakMap O(1) 隔离缓存 + 单遍扫描 + 首字符分流）
   // ============================================================================
   if (window.__ag_i18n_observer) {
     try {
@@ -1077,31 +1857,169 @@
   const DICT = Object.assign(Object.create(null), boot.i18nDict || {});
   window.__ag_i18n_dict = DICT;
 
+  // 大小写不敏感兜底索引与弯撇号 (\u2018/\u2019 -> ') 归一化（2.31.1+ 并存多种大小写与排版弯引号文案）
+  // 仅对首字母大写的界面文案启用大小写兜底，避免误伤小写标识符；精确匹配始终优先。
+  const RE_CURLY_APOS = /[\u2018\u2019]/g;
+  const DICT_APOS = new Map();
+  const DICT_CI = new Map();
+  for (const k in DICT) {
+    const v = DICT[k];
+    if (typeof v !== 'string') continue;
+    const kNorm = k.indexOf('\u2019') !== -1 || k.indexOf('\u2018') !== -1 ? k.replace(RE_CURLY_APOS, "'") : k;
+    if (kNorm !== k && !(kNorm in DICT) && !DICT_APOS.has(kNorm)) {
+      DICT_APOS.set(kNorm, v);
+    }
+    const lk = kNorm.toLowerCase();
+    if (!DICT_CI.has(lk)) DICT_CI.set(lk, v);
+  }
+  const SWARM_FRAME_ONLY_DICT = IS_SWARM_PLUGIN_FRAME
+    ? {
+        Coordinator: '协调器',
+        Goal: '目标',
+        Threads: '工作流',
+        Now: '当前',
+        Progress: '进度',
+        Stuck: '受阻停滞',
+        Moving: '推进中',
+        Waiting: '等待中',
+        Other: '其他',
+        Tasks: '任务',
+        Task: '任务',
+        Active: '活跃中',
+        Team: '团队',
+        Retired: '已退役',
+        Error: '错误',
+        Killed: '已终止',
+        Frames: '关键帧',
+        Previous: '上一帧',
+        Next: '下一帧',
+        updating: '更新中',
+        watching: '监听中',
+        stopped: '已停止',
+        stale: '待刷新',
+        '(archived)': '（已归档）',
+        '(empty)': '（空）',
+        'tasks done': '项任务已完成'
+      }
+    : null;
+
+  function dictLookup(s) {
+    if (!s) return undefined;
+    const exact = DICT[s];
+    if (typeof exact === 'string') return exact;
+    if (SWARM_FRAME_ONLY_DICT) {
+      const swarmHit = SWARM_FRAME_ONLY_DICT[s];
+      if (typeof swarmHit === 'string') return swarmHit;
+    }
+    const sNorm = s.indexOf('\u2019') !== -1 || s.indexOf('\u2018') !== -1 ? s.replace(RE_CURLY_APOS, "'") : s;
+    if (sNorm !== s) {
+      const exactNorm = DICT[sNorm];
+      if (typeof exactNorm === 'string') return exactNorm;
+    }
+    const aposAlias = DICT_APOS.get(sNorm);
+    if (typeof aposAlias === 'string') return aposAlias;
+    const c0 = sNorm.charCodeAt(0);
+    if (c0 < 65 || c0 > 90) return undefined;
+    return DICT_CI.get(sNorm.toLowerCase());
+  }
+
+  let scanBodyFn = null;
+  const I18N_OBS_OPTS = {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ['title', 'aria-label', 'placeholder']
+  };
+
   if (MODULES.i18n) {
-    const EXCLUDE_SELECTOR = SELECTORS.excludeI18n;
+    function splitTopLevelSelectors(selStr) {
+      const parts = [];
+      let cur = '';
+      let bracketDepth = 0;
+      let parenDepth = 0;
+      let quote = '';
+      const s = String(selStr || '');
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (quote) {
+          cur += ch;
+          if (ch === quote && s[i - 1] !== '\\') quote = '';
+          continue;
+        }
+        if (ch === '"' || ch === "'") {
+          quote = ch;
+          cur += ch;
+        } else if (ch === '[') {
+          bracketDepth++;
+          cur += ch;
+        } else if (ch === ']') {
+          if (bracketDepth > 0) bracketDepth--;
+          cur += ch;
+        } else if (ch === '(') {
+          parenDepth++;
+          cur += ch;
+        } else if (ch === ')') {
+          if (parenDepth > 0) parenDepth--;
+          cur += ch;
+        } else if (ch === ',' && bracketDepth === 0 && parenDepth === 0) {
+          if (cur.trim()) parts.push(cur.trim());
+          cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      if (cur.trim()) parts.push(cur.trim());
+      return parts;
+    }
+
+    const CONTAINER_IMMUTABLE_EXCLUDE_SELECTOR =
+      'code, pre, kbd, samp, style, script, noscript, [data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, #ag-live-metrics-pill, #ag-live-metrics-tooltip, .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title';
+    const TEXT_IMMUTABLE_EXCLUDE_SELECTOR =
+      'textarea, input, [contenteditable="true"], [data-testid="conversation-navigator-turn"], ' +
+      CONTAINER_IMMUTABLE_EXCLUDE_SELECTOR;
+
+    const mergedExcludeParts = splitTopLevelSelectors(DEFAULT_EXCLUDE_I18N);
+    const userExcludeParts = splitTopLevelSelectors(SELECTORS.excludeI18n);
+    for (let i = 0; i < userExcludeParts.length; i++) {
+      if (!mergedExcludeParts.includes(userExcludeParts[i])) {
+        mergedExcludeParts.push(userExcludeParts[i]);
+      }
+    }
+    const EXCLUDE_SELECTOR = mergedExcludeParts.join(', ');
+    const FORM_ATTR_EXCLUDE_SELECTOR = mergedExcludeParts
+      .filter((tok) => {
+        const low = tok.toLowerCase().replace(/\s+/g, '');
+        return (
+          low !== 'input' &&
+          low !== 'textarea' &&
+          low !== '[contenteditable="true"]' &&
+          low !== "[contenteditable='true']" &&
+          low !== '[contenteditable]' &&
+          low !== '[data-testid="conversation-navigator-turn"]' &&
+          low !== "[data-testid='conversation-navigator-turn']"
+        );
+      })
+      .join(', ');
+
+    function isFormAttrTarget(el) {
+      return !!(
+        el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          (el.getAttribute &&
+            (el.getAttribute('contenteditable') === 'true' ||
+              el.getAttribute('data-testid') === 'conversation-navigator-turn')))
+      );
+    }
+
+    const immutableTextExclCache = new WeakMap();
+    const immutableContainerExclCache = new WeakMap();
 
     // 预编译模块级正则常量，消除热路径重复编译与二次匹配
     const RE_HAS_CJK = /[\u4e00-\u9fa5]/;
     const RE_PURE_ALPHA = /^\s*[a-zA-Z]+\s*$/;
     const RE_HAS_ALPHA = /[a-zA-Z]/;
-    const RE_FILES_CHANGED = /^(\d+)\s+files?\s+changed$/i;
-    const RE_TOOLS = /^(\d+)\s+tools?$/i;
-    const RE_DEMOTED = /^(\d+)\s+demoted$/i;
-    const RE_EXCLUDED = /^(\d+)\s+excluded$/i;
-    const RE_TOOLS_EXCLUDED = /^(\d+)\s+tools?\s+excluded$/i;
-    const RE_ACTIVE_CONVS = /^(\d+)\s+active\s+conversations$/i;
-    const RE_SEE_ALL = /^See all\s*\((\d+)\)$/i;
-    const RE_SHOW_BREAKDOWNS = /^Show\s+(\d+)\s+breakdowns?$/i;
-    const RE_PERM_DELETE = /^Permanently delete\s+(.*)\s+including\s+(\d+)\s+active\s+conversations\.?$/i;
-    const RE_WORKED_FOR = /^Worked for\s+(\d+[smhd])$/i;
-    const RE_THOUGHT_FOR = /^Thought for\s+(\d+[smhd])$/i;
-    const RE_USED_LIMIT = /^You have used (some|all|most) of your (weekly|5-hour|five-hour|daily) limit,?\s*it will fully refresh in (.*)\.?$/i;
-    const RE_NOT_USED_LIMIT = /^You have not used any of your (weekly|5-hour|five-hour|daily) limit\.?$/i;
-    const RE_ARIA_BRANCH = /^Branch, current:\s*(.*)$/i;
-    const RE_ARIA_PROJECT = /^Select project, current:\s*(.*)$/i;
-
-    // 上游新增动态模板。本地已有正则的字面量不在这里重声明。
-    const RE_CURLY_APOS = /[\u2018\u2019]/g;
     const RE_REL_TIME = /^(\d+)\s*(s|sec|secs|m|min|mins|h|hr|hrs|d|w|mo|y|yr|yrs)\s+ago$/i;
     const REL_UNIT_MAP = {
       s: '秒',
@@ -1136,6 +2054,9 @@
       nov: 11,
       dec: 12
     };
+    // 客户端 main.js ($Q 权限编辑器) 在 onBlur 中硬编码判断 relatedTarget.getAttribute("aria-label") === "Cancel"
+    const SKIP_ARIA_LABEL_VALUES = new Set(['Cancel']);
+
     const RE_PCT_LEFT = /^(\d+(?:\.\d+)?)%\s*left$/i;
     const RE_WINDOW_LIMIT_COMBINED = /^(\d+)\s*([smhd])\s+limit,\s*resets in\s+(.+)$/i;
     const RE_WINDOW_LIMIT = /^(\d+)\s*([smhd])\s+limit$/i;
@@ -1145,13 +2066,54 @@
     const RE_UPDATED_AT =
       /^Updated\s+(?:((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}|\d{1,2}月\d{1,2}日),\s*)?((?:上午|下午)?\s*\d{1,2}:\d{2}(?:\s*[AP]M)?)$/;
 
+    const RE_FILES_CHANGED = /^(\d+)\s+files?\s+changed$/i;
+    const RE_TOOLS = /^(\d+)\s+tools?$/i;
+    const RE_DEMOTED = /^(\d+)\s+demoted$/i;
+    const RE_EXCLUDED = /^(\d+)\s+excluded$/i;
+    const RE_TOOLS_EXCLUDED = /^(\d+)\s+tools?\s+excluded$/i;
+    const RE_ACTIVE_CONVS = /^(\d+)\s+active\s+conversations?$/i;
     const RE_ARCHIVED_CONVS = /^(\d+)\s+archived\s+conversations?$/i;
     const RE_PINNED_COUNT = /^(\d+)\s+pinned(?:\s+tabs?)?$/i;
     const RE_MODELS_SELECTED = /^(\d+)\s+models?\s+selected$/i;
     const RE_BROWSER_STEPS = /^(\d+)\s+browser\s+steps?$/i;
     const RE_MEDIA_ATTACHMENTS = /^(\d+)\s+(image|audio|video)\s+attachments?$/i;
     const RE_ATTACHMENTS_COUNT = /^(\d+)\s+attachments?$/i;
+    const RE_IMAGES_COUNT = /^(\d+)\s+images?$/i;
     const RE_COMMENTS_COUNT = /^(\d+)\s+comments?$/i;
+    const RE_SIDE_QUESTIONS_COUNT = /^(\d+)\s+side\s+questions?$/i;
+    const RE_RESUME_COMMENT_DRAFTS = /^Resume\s+(\d+)\s+comment\s+drafts?$/i;
+    const RE_VIEW_SIDE_QUESTIONS = /^View\s+(\d+)\s+side\s+questions?$/i;
+    const RE_SIDE_QUESTION_TITLE = /^Side\s+Question:\s*(.+)$/i;
+    const RE_OPENS_EXT_LINK = /^Opens\s+external\s+link:\s*(.+)$/i;
+    const RE_OPEN_CONV_ID = /^Open\s+conversation\s+([0-9a-f-]{8,36})$/i;
+    const RE_OPEN_PLUGIN_NAME = /^Open\s+the\s+([^\r\n]{1,80}?)\s+plugin$/i;
+    const RE_EDIT_SIDE_Q_TITLE = /^Edit\s+side\s+question\s+title:\s*(.+)$/i;
+    const RE_CONNECTED_TO_HOST = /^Connected\s+to\s+([^\r\n]{1,120})$/;
+
+    // Swarm 侧车专属动态规则（仅在 IS_SWARM_PLUGIN_FRAME 下生效，主窗口零开销零误伤）
+    const RE_SWARM_NUM_OF_NUM = /^(\d+)\s+of\s+(\d+)$/i;
+    const RE_SWARM_WAITING_ON = /^Waiting\s+on\s+(@?\S+)$/i;
+    const RE_SWARM_N_WAITING_ON = /^(\d+)\s+waiting\s+on\s+(@\S+)$/i;
+    const RE_SWARM_N_STUCK = /^(\d+)\s+stuck$/i;
+    const RE_SWARM_N_NEEDS_YOU = /^(\d+)\s+needs?\s+you$/i;
+    const RE_SWARM_N_THREADS_OPEN = /^(\d+)\s+threads?\s+open$/i;
+    const RE_SWARM_N_ACTIVE = /^(\d+)\s+active$/i;
+    const RE_SWARM_LAST_SEEN = /^last\s+seen\s+(\d+)\s*(m|h|d)\s+ago$/i;
+    const RE_SWARM_NOW_FRAC = /^Now\s*·\s*(\d+)\s*\/\s*(\d+)$/i;
+    const RE_SWARM_READ_SEQ = /^read\s+#(\d+)(?:\s*·\s*updated\s+(.+))?$/i;
+    const RE_SWARM_PAUSED_REASON = /^paused:\s*(quota|error)$/i;
+    const RE_SWARM_OV_NOTES = /^overview\s*·\s*from\s+the\s+narrator['\u2019]s\s+notes(?:\s*·\s*(.+))?$/i;
+    const RE_SWARM_YOU_SUFFIX = /^([A-Za-z0-9._-]+)\s+\(you\)$/;
+    const RE_SWARM_FROM_OPT = /^From\s+([A-Za-z0-9._-]+)$/;
+    const RE_SWARM_TO_OPT = /^To\s+(@?[A-Za-z0-9._-]+)$/;
+    const RE_SWARM_LIVE_TIP = /^(Thinking|Latest action):\s*([\s\S]+)$/;
+    const RE_SWARM_RUNS_ON = /^Runs\s+on\s+(.+)$/i;
+    const RE_SWARM_NARRATOR_READ = /^Narrator\s+read\s+up\s+to\s+#(\d+)\s+of\s+(\d+)$/i;
+    const RE_SWARM_POSTS_SINCE_UPD = /^(\d+)\s+posts?\s+since\s+the\s+view\s+was\s+updated$/i;
+    const RE_SWARM_NARRATOR_FAILED_TIP = /^The\s+narrator['\u2019]s\s+last\s+step\s+failed:\s*(.+)$/i;
+    const RE_SWARM_POSTED_IN_CH = /^Posted\s+in\s+#([^\s;]+);\s*click\s+to\s+show\s+only\s+#\1$/i;
+    const RE_SWARM_GOTO_SEQ = /^Go\s+to\s+#(\d+)(?:\s*\((.+)\))?$/i;
+    const RE_SWARM_TPROG_DONE = /^(.+?)\s+done$/i;
     const RE_INSTALLED_COUNT = /^(\d+)\s+installed$/i;
     const RE_ACCOUNTS_COUNT = /^(\d+)\s+accounts?$/i;
     const RE_UPDATES_COUNT = /^(\d+)\s+updates?$/i;
@@ -1165,13 +2127,17 @@
     const RE_USES_LOCAL_CLONE = /^Uses your local clone,\s+([^\r\n]{1,100})$/;
     const RE_PLUS_ATTACHMENTS = /^\+(\d+)\s+attachments?$/i;
     const RE_PLUS_MORE = /^\+(\d+)\s+more(\s*\(Show all\))?$/i;
+    const RE_SEE_ALL = /^See all\s*\((\d+)\)$/i;
+    const RE_SHOW_BREAKDOWNS = /^Show\s+(\d+)\s+breakdowns?$/i;
     const RE_SHOW_MORE_SUBAGENTS = /^Show\s+(\d+)\s+more\s+subagents?$/i;
     const RE_SHOW_EARLIER_STEPS = /^Show\s+(\d+)\s+earlier\s+steps?$/i;
     const RE_SORT_FILTER_ACTIVE = /^Sort and filter conversations\s*\((\d+)\s+active\)$/i;
     const RE_STILL_THINKING_SEC = /^Still thinking,\s*(\d+)\s*seconds?$/i;
     const RE_MARKED_READ = /^Marked\s+(\d+)\s+conversations?\s+as\s+read$/i;
     const RE_ZIPPING_FOLDER = /^Zipping\s+(.+?)(?:…|\.\.\.)$/i;
+    const RE_PERM_DELETE = /^Permanently delete\s+(.*)\s+including\s+(\d+)\s+active\s+conversations\.?$/i;
     const RE_WORKED_FOR_UPDATES = /^Worked for\s+([<0-9smhd\s]+?)\s*·\s*(\d+)\s+updates?$/i;
+    const RE_WORKED_FOR = /^Worked for\s+([<0-9smhd]+(?:\s+\d+[smhd])*)$/i;
     const RE_WAITING_CMD_SEC = /^Waiting for command completion\s*\(up to\s+(\d+)\s+seconds?\)$/i;
     const RE_HOME_HEY_NAME = /^Hey\s+([^\r\n]{1,40}?),\s+what should we build today\?$/i;
     const RE_HOME_WELCOME_NAME = /^Welcome back,\s*([^\r\n]{1,40}?)\.\s+Where should we pick up\?$/i;
@@ -1181,6 +2147,7 @@
     const RE_WORKTREE_FROM = /^Worktree from\s+([^\r\n,]{1,80}?)(?:,\s*and reuse\s+([^\r\n]{1,80}))?$/;
     const RE_AUTO_FIG_WORKSPACE =
       /^Automatically create a new\s+(Fig|Piper|JJ)\s+workspace when the conversation starts(?:,\s*Worktree from\s+([^\r\n,]{1,80}?))?(?:,\s*and reuse\s+([^\r\n]{1,80}))?$/;
+    const RE_THOUGHT_FOR = /^Thought for\s+([<0-9smhd]+(?:\s+\d+[smhd])*)$/i;
     const RE_THINKING_FOR = /^Thinking for\s+([<0-9smhd]+(?:\s+\d+[smhd])*)$/i;
     const RE_USING_BROWSER_SEC = /^Using browser\s*\((\d+)s\)$/i;
     const RE_RUNNING_FOR = /^Running\s+for\s+([<0-9smhd]+(?:\s+\d+[smhd])*)$/i;
@@ -1254,6 +2221,8 @@
     const RE_DELETED_RECORDINGS = /^Deleted\s+(\d+)\s+recordings?\s*\(([\d.]+\s*MB)\)$/i;
     const RE_DELETE_RECORDINGS_CONFIRM =
       /^This deletes\s+(\d+)\s+call recordings?\s*\(([\d.]+\s*MB)\)\s+from your machine\.\s*You can't undo this\.$/i;
+    const RE_USED_LIMIT = /^You have used (some|all|most) of your (weekly|5-hour|five-hour|daily) limit,?\s*it will fully refresh in (.*)\.?$/i;
+    const RE_NOT_USED_LIMIT = /^You have not used any of your (weekly|5-hour|five-hour|daily) limit\.?$/i;
     const RE_ORCHESTRATOR_MODEL = /^Orchestrator\s*\(([^)]+)\)$/i;
     const RE_MODEL_OFFLOAD_DESC =
       /^([A-Za-z0-9 .+-]+?)\s+that may offload routine steps to\s+([A-Za-z0-9 .+-]+?)\.\s*Same\s+([A-Za-z0-9 .+-]+?)-level quality,\s*fewer tokens used\.?$/i;
@@ -1267,6 +2236,8 @@
     const RE_NEED_CREDITS_MODEL =
       /^You need\s+(?:at least\s+(\d+)|more)\s+AI Credits to send messages\.\s*To continue using\s+(.+?)\s+now,\s*purchase more AI Credits\.(?:\s*Your plan's baseline quota will refresh on\s+(.+?)\.)?(?:\s*To continue using this model now,\s*enable AI Credit overages\.)?$/i;
     const RE_BASELINE_QUOTA_REFRESH = /^Your plan's baseline quota will refresh on\s+(.+?)\.?$/i;
+    const RE_ARIA_BRANCH = /^Branch, current:\s*(.*)$/i;
+    const RE_ARIA_PROJECT = /^Select project(?:, current)?:\s*(.*)$/i;
     const RE_ARIA_LOCATION = /^(?:Where the agent runs, current|Select location(?:, current)?):\s*(.*)$/i;
     const RE_ARIA_VERSION = /^Version\s+(\d+(?:\.\d+)+(?:-[0-9A-Za-z.-]+)?(?:\s*·\s*[^\r\n]{1,32})?)$/i;
     const RE_ARIA_MODEL = /^(?:Select model|Model(?:\s+selector)?)(?:,\s*current)?:\s*(.*)$/i;
@@ -1328,24 +2299,52 @@
       }
       return '更新于 ' + datePart.trim() + ' ' + timePart.trim();
     }
+
+    function isExcludedElement(el, batchSafeSet) {
+      if (!el || el.nodeType !== 1) return true;
+      if (immutableTextExclCache.get(el) === true) return true;
+      if (batchSafeSet && batchSafeSet.has(el)) return false;
+      if (el.closest(TEXT_IMMUTABLE_EXCLUDE_SELECTOR)) {
+        if (el.isConnected) immutableTextExclCache.set(el, true);
+        return true;
+      }
+      if (el.closest(EXCLUDE_SELECTOR)) {
+        return true;
+      }
+      if (batchSafeSet) batchSafeSet.add(el);
+      return false;
+    }
+
+    const MARKDOWN_UI_ATTR_SELECTOR =
+      'button[aria-label], button[title], [role="region"][aria-label], span[aria-label^="Opens external link:"]';
+
+    function isMarkdownChromeAttrTarget(el) {
+      return !!(
+        el &&
+        el.nodeType === 1 &&
+        el.matches &&
+        el.matches(MARKDOWN_UI_ATTR_SELECTOR) &&
+        el.closest('[data-markdown-root]') &&
+        !el.closest('pre, code, .monaco-editor, .monaco-diff-editor, .xterm')
+      );
+    }
+
+    function canTranslateElementAttrs(el, batchSafeSet) {
+      if (!el || el.nodeType !== 1) return false;
+      if (isMarkdownChromeAttrTarget(el)) return true;
+      if (isFormAttrTarget(el)) {
+        if (immutableContainerExclCache.get(el) === true) return false;
+        if (el.closest(CONTAINER_IMMUTABLE_EXCLUDE_SELECTOR)) {
+          if (el.isConnected) immutableContainerExclCache.set(el, true);
+          return false;
+        }
+        return FORM_ATTR_EXCLUDE_SELECTOR ? !el.closest(FORM_ATTR_EXCLUDE_SELECTOR) : true;
+      }
+      return !isExcludedElement(el, batchSafeSet);
+    }
+
     function isInHeaderOrBreadcrumb(el) {
       return !!(el && el.closest && el.closest('header, [data-testid="breadcrumb-segment"]'));
-    }
-
-    function isExcludedElement(el) {
-      if (!el || el.nodeType !== 1) return true;
-      return !!el.closest(EXCLUDE_SELECTOR);
-    }
-
-    // 精确命中失败后才把弯引号折成直引号。不做大小写不敏感索引。
-    function dictExactFold(text) {
-      if (!text) return null;
-      if (typeof DICT[text] === 'string') return DICT[text];
-      if (text.indexOf('\u2018') === -1 && text.indexOf('\u2019') === -1) return null;
-      RE_CURLY_APOS.lastIndex = 0;
-      const folded = text.replace(RE_CURLY_APOS, "'");
-      if (folded === text || typeof DICT[folded] !== 'string') return null;
-      return DICT[folded];
     }
 
     function computeTextTranslation(raw, contextEl) {
@@ -1353,32 +2352,19 @@
       const trimmed = raw.trim();
       if (!trimmed) return null;
 
-      // 1. 无原型静态词典 O(1) 精确匹配（附句尾句号自动回退）
-      let replacement = DICT[trimmed];
+      // 1. 无原型静态词典 O(1) 精确匹配（附句尾句号自动回退；函数式 replace 防止 $&/$1 二次展开）
+      let replacement = dictLookup(trimmed);
       if (typeof replacement !== 'string' && trimmed.endsWith('.')) {
-        const withoutDot = DICT[trimmed.slice(0, -1)];
+        const withoutDot = dictLookup(trimmed.slice(0, -1));
         if (typeof withoutDot === 'string') {
           replacement = withoutDot.endsWith('。') ? withoutDot : withoutDot + '。';
-        }
-      }
-      if (typeof replacement !== 'string' && (trimmed.indexOf('\u2018') !== -1 || trimmed.indexOf('\u2019') !== -1)) {
-        RE_CURLY_APOS.lastIndex = 0;
-        const foldedKey = trimmed.replace(RE_CURLY_APOS, "'");
-        if (foldedKey !== trimmed) {
-          replacement = DICT[foldedKey];
-          if (typeof replacement !== 'string' && foldedKey.endsWith('.')) {
-            const foldedWithoutDot = DICT[foldedKey.slice(0, -1)];
-            if (typeof foldedWithoutDot === 'string') {
-              replacement = foldedWithoutDot.endsWith('。') ? foldedWithoutDot : foldedWithoutDot + '。';
-            }
-          }
         }
       }
       if (typeof replacement === 'string') {
         if (RE_HAS_CJK.test(replacement) && RE_PURE_ALPHA.test(raw)) {
           return replacement;
         }
-        return raw.replace(trimmed, replacement);
+        return raw.replace(trimmed, () => replacement);
       }
 
       // 2. 快速短路：不含任何英文字母直接跳过动态正则
@@ -1388,12 +2374,6 @@
       const c0 = trimmed.charCodeAt(0);
       if (c0 >= 48 && c0 <= 57) {
         // 以数字 '0'-'9' 开头
-        if (RE_FILES_CHANGED.test(trimmed)) return raw.replace(RE_FILES_CHANGED, '$1 个文件变更');
-        if (RE_TOOLS.test(trimmed)) return raw.replace(RE_TOOLS, '$1 个工具');
-        if (RE_DEMOTED.test(trimmed)) return raw.replace(RE_DEMOTED, '$1 项已降级');
-        if (RE_EXCLUDED.test(trimmed)) return raw.replace(RE_EXCLUDED, '$1 项已排除');
-        if (RE_TOOLS_EXCLUDED.test(trimmed)) return raw.replace(RE_TOOLS_EXCLUDED, '$1 个工具已排除');
-        if (RE_ACTIVE_CONVS.test(trimmed)) return raw.replace(RE_ACTIVE_CONVS, '$1 个进行中的会话');
         if (RE_PCT_LEFT.test(trimmed)) return raw.replace(RE_PCT_LEFT, '$1% 剩余');
         const mWinComb = trimmed.match(RE_WINDOW_LIMIT_COMBINED);
         if (mWinComb) {
@@ -1411,6 +2391,12 @@
           return raw.replace(trimmed, () => mRel[1] + ' ' + unit + '前');
         }
         if (RE_UPDATES_COUNT.test(trimmed)) return raw.replace(RE_UPDATES_COUNT, '$1 条进展');
+        if (RE_FILES_CHANGED.test(trimmed)) return raw.replace(RE_FILES_CHANGED, '$1 个文件变更');
+        if (RE_TOOLS.test(trimmed)) return raw.replace(RE_TOOLS, '$1 个工具');
+        if (RE_DEMOTED.test(trimmed)) return raw.replace(RE_DEMOTED, '$1 项已降级');
+        if (RE_EXCLUDED.test(trimmed)) return raw.replace(RE_EXCLUDED, '$1 项已排除');
+        if (RE_TOOLS_EXCLUDED.test(trimmed)) return raw.replace(RE_TOOLS_EXCLUDED, '$1 个工具已排除');
+        if (RE_ACTIVE_CONVS.test(trimmed)) return raw.replace(RE_ACTIVE_CONVS, '$1 个进行中的对话');
         if (RE_ARCHIVED_CONVS.test(trimmed)) return raw.replace(RE_ARCHIVED_CONVS, '$1 个已归档对话');
         if (RE_PINNED_COUNT.test(trimmed)) return raw.replace(RE_PINNED_COUNT, '$1 个已固定标签页');
         if (RE_MODELS_SELECTED.test(trimmed)) return raw.replace(RE_MODELS_SELECTED, '已选择 $1 个模型');
@@ -1422,7 +2408,9 @@
           return raw.replace(trimmed, () => mMediaAtt[1] + ' 个' + mediaZh + '附件');
         }
         if (RE_ATTACHMENTS_COUNT.test(trimmed)) return raw.replace(RE_ATTACHMENTS_COUNT, '$1 个附件');
+        if (RE_IMAGES_COUNT.test(trimmed)) return raw.replace(RE_IMAGES_COUNT, '$1 张图片');
         if (RE_COMMENTS_COUNT.test(trimmed)) return raw.replace(RE_COMMENTS_COUNT, '$1 条评论');
+        if (RE_SIDE_QUESTIONS_COUNT.test(trimmed)) return raw.replace(RE_SIDE_QUESTIONS_COUNT, '$1 个支线提问');
         if (RE_INSTALLED_COUNT.test(trimmed)) return raw.replace(RE_INSTALLED_COUNT, '已安装 $1 项');
         if (RE_ACCOUNTS_COUNT.test(trimmed)) return raw.replace(RE_ACCOUNTS_COUNT, '$1 个账号');
         if (RE_PROJECTS_COUNT.test(trimmed)) return raw.replace(RE_PROJECTS_COUNT, '$1 个项目');
@@ -1431,9 +2419,20 @@
         if (RE_POSTS_COUNT.test(trimmed)) return raw.replace(RE_POSTS_COUNT, '$1 条发言');
         if (RE_MEMBERS_COUNT.test(trimmed)) return raw.replace(RE_MEMBERS_COUNT, '$1 名成员');
         if (RE_MCP_FAILED_START.test(trimmed)) return raw.replace(RE_MCP_FAILED_START, '$1 个 MCP 服务器启动失败');
+        if (IS_SWARM_PLUGIN_FRAME) {
+          if (RE_SWARM_N_WAITING_ON.test(trimmed)) return raw.replace(RE_SWARM_N_WAITING_ON, '$1 项等待 $2');
+          if (RE_SWARM_N_STUCK.test(trimmed)) return raw.replace(RE_SWARM_N_STUCK, '$1 项受阻停滞');
+          if (RE_SWARM_N_NEEDS_YOU.test(trimmed)) return raw.replace(RE_SWARM_N_NEEDS_YOU, '$1 项需要您处理');
+          if (RE_SWARM_N_THREADS_OPEN.test(trimmed)) return raw.replace(RE_SWARM_N_THREADS_OPEN, '$1 个工作流进行中');
+          if (RE_SWARM_N_ACTIVE.test(trimmed)) return raw.replace(RE_SWARM_N_ACTIVE, '$1 项活跃');
+          if (contextEl && contextEl.closest && contextEl.closest('.o2-progt') && RE_SWARM_NUM_OF_NUM.test(trimmed)) {
+            return raw.replace(RE_SWARM_NUM_OF_NUM, '$1 / $2');
+          }
+        }
         return null;
       }
       if (c0 === 43) {
+        // 以 '+' 开头
         if (RE_PLUS_ATTACHMENTS.test(trimmed)) return raw.replace(RE_PLUS_ATTACHMENTS, '+$1 个附件');
         const mPlusMore = trimmed.match(RE_PLUS_MORE);
         if (mPlusMore) {
@@ -1443,6 +2442,51 @@
       }
 
       const firstUpper = trimmed[0].toUpperCase();
+      if (IS_SWARM_PLUGIN_FRAME) {
+        if (firstUpper === 'W' && RE_SWARM_WAITING_ON.test(trimmed)) {
+          return raw.replace(RE_SWARM_WAITING_ON, '等待 $1');
+        }
+        if (firstUpper === 'L') {
+          const mSeen = trimmed.match(RE_SWARM_LAST_SEEN);
+          if (mSeen) {
+            const u = UNIT_MAP_SHORT[mSeen[2].toLowerCase()] || mSeen[2];
+            return raw.replace(trimmed, () => '上次活跃 ' + mSeen[1] + ' ' + u + '前');
+          }
+        }
+        if (firstUpper === 'N' && RE_SWARM_NOW_FRAC.test(trimmed)) {
+          return raw.replace(RE_SWARM_NOW_FRAC, '当前 · $1 / $2');
+        }
+        if (firstUpper === 'R') {
+          const mRead = trimmed.match(RE_SWARM_READ_SEQ);
+          if (mRead) {
+            const updPart = mRead[2] ? ' · 更新于 ' + (computeTextTranslation(mRead[2].trim(), contextEl) || mRead[2].trim()) : '';
+            return raw.replace(trimmed, () => '已读 #' + mRead[1] + updPart);
+          }
+        }
+        if (firstUpper === 'P') {
+          const mPaused = trimmed.match(RE_SWARM_PAUSED_REASON);
+          if (mPaused) {
+            return raw.replace(trimmed, () => '已暂停：' + (mPaused[1].toLowerCase() === 'quota' ? '配额耗尽' : '错误'));
+          }
+        }
+        if (firstUpper === 'O') {
+          const mOvNotes = trimmed.match(RE_SWARM_OV_NOTES);
+          if (mOvNotes) {
+            const rRaw = mOvNotes[1] ? mOvNotes[1].trim() : '';
+            const rZh = rRaw ? dictLookup(rRaw) || rRaw : '';
+            return raw.replace(trimmed, () => '概览 · 来自纪要员笔记' + (rZh ? ' · ' + rZh : ''));
+          }
+        }
+        if (firstUpper === 'F' && contextEl && contextEl.tagName === 'OPTION' && RE_SWARM_FROM_OPT.test(trimmed)) {
+          return raw.replace(RE_SWARM_FROM_OPT, '来自 $1');
+        }
+        if (firstUpper === 'T' && contextEl && contextEl.tagName === 'OPTION' && RE_SWARM_TO_OPT.test(trimmed)) {
+          return raw.replace(RE_SWARM_TO_OPT, '发给 $1');
+        }
+        if (trimmed.endsWith('(you)') && RE_SWARM_YOU_SUFFIX.test(trimmed)) {
+          return raw.replace(RE_SWARM_YOU_SUFFIX, '$1（您）');
+        }
+      }
       if (firstUpper === 'S') {
         if (RE_SEE_ALL.test(trimmed)) return raw.replace(RE_SEE_ALL, '查看全部 ($1)');
         if (RE_SHOW_BREAKDOWNS.test(trimmed)) return raw.replace(RE_SHOW_BREAKDOWNS, '展开明细 ($1 项)');
@@ -1450,6 +2494,7 @@
         if (RE_SHOW_EARLIER_STEPS.test(trimmed)) return raw.replace(RE_SHOW_EARLIER_STEPS, '展开前 $1 个步骤');
         if (RE_SORT_FILTER_ACTIVE.test(trimmed)) return raw.replace(RE_SORT_FILTER_ACTIVE, '排序与筛选对话（已启用 $1 项）');
         if (RE_STILL_THINKING_SEC.test(trimmed)) return raw.replace(RE_STILL_THINKING_SEC, '仍在思考（$1 秒）');
+        if (RE_SIDE_QUESTION_TITLE.test(trimmed)) return raw.replace(RE_SIDE_QUESTION_TITLE, (_, q) => '支线提问：' + q);
         if (RE_SEARCH_GOOGLE.test(trimmed)) return raw.replace(RE_SEARCH_GOOGLE, (_, q) => '使用 Google 搜索“' + q + '”');
         if (!isInHeaderOrBreadcrumb(contextEl)) {
           const mSearch = trimmed.match(RE_EPHEMERAL_ACTIVE);
@@ -1461,42 +2506,46 @@
         }
       } else if (firstUpper === 'P') {
         if (RE_PERM_DELETE.test(trimmed)) {
-          return raw.replace(RE_PERM_DELETE, '永久删除 $1 及 $2 个进行中的会话。');
+          return raw.replace(RE_PERM_DELETE, (_, target, cnt) => '永久删除 ' + target + ' 及 ' + cnt + ' 个进行中的对话。');
         }
-      } else if (firstUpper === 'W') {
-        if (RE_WORKED_FOR_UPDATES.test(trimmed)) {
-          return raw.replace(RE_WORKED_FOR_UPDATES, (_, dur, cnt) => '已工作 ' + dur.trim() + ' · ' + cnt + ' 条进展');
+      } else if (firstUpper === 'W' || firstUpper === 'M') {
+        const mNamed = trimmed.match(RE_NAMED_LIMIT_RESETS);
+        if (mNamed) {
+          const pZh = NAMED_PERIOD_MAP[mNamed[1].toLowerCase()] || mNamed[1];
+          return raw.replace(trimmed, () => pZh + '限额，' + formatCompactDurationZh(mNamed[2]) + '后重置');
         }
-        if (RE_WORKED_FOR.test(trimmed)) return raw.replace(RE_WORKED_FOR, '已工作 $1');
-        const mNamedW = trimmed.match(RE_NAMED_LIMIT_RESETS);
-        if (mNamedW) {
-          const pZh = NAMED_PERIOD_MAP[mNamedW[1].toLowerCase()] || mNamedW[1];
-          return raw.replace(trimmed, () => pZh + '限额，' + formatCompactDurationZh(mNamedW[2]) + '后重置');
-        }
-        if (RE_WAITING_CMD_SEC.test(trimmed)) {
-          return raw.replace(RE_WAITING_CMD_SEC, '正在等待命令完成（最多 $1 秒）');
-        }
-        const mWel = trimmed.match(RE_HOME_WELCOME_NAME);
-        if (mWel) {
-          return raw.replace(trimmed, () => '欢迎回来，' + mWel[1].trim() + '。我们从哪里继续？');
-        }
-        const mWorkLocal = trimmed.match(RE_WORK_LOCALLY_ON);
-        if (mWorkLocal) {
-          return raw.replace(trimmed, () => '在本地 ' + mWorkLocal[1].trim() + ' 中工作');
-        }
-        const mWorkFrom = trimmed.match(RE_WORKTREE_FROM);
-        if (mWorkFrom) {
-          return raw.replace(
-            trimmed,
-            () =>
-              mWorkFrom[2]
-                ? '从 ' + mWorkFrom[1].trim() + ' 创建 Worktree，并复用 ' + mWorkFrom[2].trim()
-                : '从 ' + mWorkFrom[1].trim() + ' 创建 Worktree'
-          );
-        }
-        const mWorkIn = trimmed.match(RE_WORK_IN_TARGET);
-        if (mWorkIn) {
-          return raw.replace(trimmed, () => '在 ' + mWorkIn[1].trim() + ' 中工作');
+        if (firstUpper === 'W') {
+          if (RE_WORKED_FOR_UPDATES.test(trimmed)) {
+            return raw.replace(RE_WORKED_FOR_UPDATES, (_, dur, cnt) => '已工作 ' + dur.trim() + ' · ' + cnt + ' 条进展');
+          }
+          if (RE_WORKED_FOR.test(trimmed)) return raw.replace(RE_WORKED_FOR, '已工作 $1');
+          if (RE_WAITING_CMD_SEC.test(trimmed)) {
+            return raw.replace(RE_WAITING_CMD_SEC, '正在等待命令完成（最多 $1 秒）');
+          }
+          const mWel = trimmed.match(RE_HOME_WELCOME_NAME);
+          if (mWel) {
+            return raw.replace(trimmed, () => '欢迎回来，' + mWel[1].trim() + '。我们从哪里继续？');
+          }
+          const mWorkLocal = trimmed.match(RE_WORK_LOCALLY_ON);
+          if (mWorkLocal) {
+            return raw.replace(trimmed, () => '在本地 ' + mWorkLocal[1].trim() + ' 中工作');
+          }
+          const mWorkFrom = trimmed.match(RE_WORKTREE_FROM);
+          if (mWorkFrom) {
+            return raw.replace(
+              trimmed,
+              () =>
+                mWorkFrom[2]
+                  ? '从 ' + mWorkFrom[1].trim() + ' 创建 Worktree，并复用 ' + mWorkFrom[2].trim()
+                  : '从 ' + mWorkFrom[1].trim() + ' 创建 Worktree'
+            );
+          }
+          const mWorkIn = trimmed.match(RE_WORK_IN_TARGET);
+          if (mWorkIn) {
+            return raw.replace(trimmed, () => '在 ' + mWorkIn[1].trim() + ' 中工作');
+          }
+        } else if (RE_MARKED_READ.test(trimmed)) {
+          return raw.replace(RE_MARKED_READ, '已将 $1 个对话标为已读');
         }
       } else if (firstUpper === 'T') {
         if (RE_THOUGHT_FOR.test(trimmed)) return raw.replace(RE_THOUGHT_FOR, '已思考 $1');
@@ -1507,49 +2556,11 @@
             '这将从您的设备中删除 $1 条通话录音（$2），此操作无法撤销。'
           );
         }
-      } else if (firstUpper === 'Y') {
-        const mUsed = trimmed.match(RE_USED_LIMIT);
-        if (mUsed) {
-          const degreeMap = { some: '部分', all: '全部', most: '大部分' };
-          const typeMap = { weekly: '每周', '5-hour': '5 小时', 'five-hour': '5 小时', daily: '每日' };
-          const degree = degreeMap[mUsed[1].toLowerCase()] || mUsed[1];
-          const type = typeMap[mUsed[2].toLowerCase()] || mUsed[2];
-          const timeStr = mUsed[3]
-            .replace(/\.$/, '')
-            .replace(/(\d+)\s*days?/gi, '$1 天')
-            .replace(/(\d+)\s*hours?/gi, '$1 小时')
-            .replace(/(\d+)\s*minutes?/gi, '$1 分钟')
-            .replace(/(\d+)\s*seconds?/gi, '$1 秒')
-            .replace(/,\s*/g, ' ')
-            .trim();
-          return '您已消耗' + degree + type + '额度，将在 ' + timeStr + ' 后完全重置。';
-        }
-        const mNotUsed = trimmed.match(RE_NOT_USED_LIMIT);
-        if (mNotUsed) {
-          const typeMap = { weekly: '每周', '5-hour': '5 小时', 'five-hour': '5 小时', daily: '每日' };
-          const type = typeMap[mNotUsed[1].toLowerCase()] || mNotUsed[1];
-          return '您尚未消耗任何' + type + '额度。';
-        }
-        if (RE_QUOTA_RESET_SWITCH.test(trimmed)) {
-          return raw.replace(RE_QUOTA_RESET_SWITCH, (_, m, dt) => '您的 ' + (dictExactFold(m.trim()) || m.trim()) + ' 配额将于 ' + dt + ' 重置，请切换至其他可用模型以继续。');
-        }
-        if (RE_QUOTA_REACHED_SWITCH.test(trimmed)) {
-          return raw.replace(RE_QUOTA_REACHED_SWITCH, (_, m) => '您的 ' + (dictExactFold(m.trim()) || m.trim()) + ' 配额已用尽，请切换至其他可用模型以继续。');
-        }
-        const mNeedCred = trimmed.match(RE_NEED_CREDITS_MODEL);
-        if (mNeedCred) {
-          const amtPart = mNeedCred[1] ? '至少 ' + mNeedCred[1] + ' 点' : '更多';
-          const modName = mNeedCred[2].trim() === 'this model' ? '该模型' : dictExactFold(mNeedCred[2].trim()) || mNeedCred[2].trim();
-          let out = '发送消息需要' + amtPart + ' AI 点数。若需立即继续使用 ' + modName + '，请购买更多 AI 点数。';
-          if (mNeedCred[3]) out += ' 您套餐的基础配额将于 ' + mNeedCred[3] + ' 刷新。';
-          if (/enable AI Credit overages/i.test(trimmed)) out += ' 若需立即继续使用该模型，请开启 AI 点数超额使用。';
-          return out;
-        }
-        if (RE_BASELINE_QUOTA_REFRESH.test(trimmed)) {
-          return raw.replace(RE_BASELINE_QUOTA_REFRESH, '您套餐的基础配额将于 $1 刷新。');
-        }
       } else if (firstUpper === 'E' || firstUpper === 'R' || firstUpper === 'L') {
         if (firstUpper === 'R') {
+          if (RE_RESUME_COMMENT_DRAFTS.test(trimmed)) {
+            return raw.replace(RE_RESUME_COMMENT_DRAFTS, '恢复 $1 条评论草稿');
+          }
           const mResets = trimmed.match(RE_RESETS_IN);
           if (mResets) {
             return raw.replace(trimmed, () => formatCompactDurationZh(mResets[1]) + '后重置');
@@ -1588,15 +2599,6 @@
         if (RE_DELETED_RECORDINGS.test(trimmed)) {
           return raw.replace(RE_DELETED_RECORDINGS, '已删除 $1 条录音 ($2)');
         }
-      } else if (firstUpper === 'M') {
-        const mNamedM = trimmed.match(RE_NAMED_LIMIT_RESETS);
-        if (mNamedM) {
-          const pZh = NAMED_PERIOD_MAP[mNamedM[1].toLowerCase()] || mNamedM[1];
-          return raw.replace(trimmed, () => pZh + '限额，' + formatCompactDurationZh(mNamedM[2]) + '后重置');
-        }
-        if (RE_MARKED_READ.test(trimmed)) {
-          return raw.replace(RE_MARKED_READ, '已将 $1 个对话标为已读');
-        }
       } else if (firstUpper === 'U') {
         if (RE_USING_BROWSER_SEC.test(trimmed)) {
           return raw.replace(RE_USING_BROWSER_SEC, '正在操作浏览器 ($1s)');
@@ -1613,6 +2615,9 @@
           return raw.replace(trimmed, () => formatUpdatedAtZh(mUpd[1], mUpd[2]));
         }
       } else if (firstUpper === 'V') {
+        if (RE_VIEW_SIDE_QUESTIONS.test(trimmed)) {
+          return raw.replace(RE_VIEW_SIDE_QUESTIONS, '查看 $1 个支线提问');
+        }
         const mVer = trimmed.match(RE_ARIA_VERSION);
         if (mVer) {
           return raw.replace(trimmed, () => '版本 ' + mVer[1].trim());
@@ -1620,6 +2625,71 @@
       } else if (firstUpper === 'Z') {
         if (RE_ZIPPING_FOLDER.test(trimmed)) {
           return raw.replace(RE_ZIPPING_FOLDER, (_, folder) => '正在打包 ' + folder + '…');
+        }
+      } else if (firstUpper === 'N') {
+        if (trimmed === 'New' || trimmed === 'NEW') {
+          const btn = contextEl && contextEl.closest && contextEl.closest('button');
+          const isActionBtn = !!(
+            btn &&
+            !btn.hasAttribute('data-model-label') &&
+            !(contextEl && contextEl.closest && contextEl.closest('[data-testid*="model-selector"]')) &&
+            (btn.textContent || '').replace(/\badd\b|\+/gi, '').trim() === trimmed
+          );
+          return raw.replace(trimmed, () => (isActionBtn ? '新建' : '新'));
+        }
+      } else if (firstUpper === 'O') {
+        if (RE_ORCHESTRATOR_MODEL.test(trimmed)) {
+          return raw.replace(RE_ORCHESTRATOR_MODEL, '编排器 ($1)');
+        }
+      } else if (firstUpper === 'C') {
+        if (
+          contextEl &&
+          contextEl.closest &&
+          contextEl.closest('[data-testid="ssh-machine-switcher-status"]') &&
+          RE_CONNECTED_TO_HOST.test(trimmed)
+        ) {
+          return raw.replace(RE_CONNECTED_TO_HOST, '已连接到 $1');
+        }
+      } else if (firstUpper === 'Y') {
+        const mUsed = trimmed.match(RE_USED_LIMIT);
+        if (mUsed) {
+          const degreeMap = { some: '部分', all: '全部', most: '大部分' };
+          const typeMap = { weekly: '每周', '5-hour': '5 小时', 'five-hour': '5 小时', daily: '每日' };
+          const degree = degreeMap[mUsed[1].toLowerCase()] || mUsed[1];
+          const type = typeMap[mUsed[2].toLowerCase()] || mUsed[2];
+          const timeStr = mUsed[3]
+            .replace(/\.$/, '')
+            .replace(/(\d+)\s*days?/gi, '$1 天')
+            .replace(/(\d+)\s*hours?/gi, '$1 小时')
+            .replace(/(\d+)\s*minutes?/gi, '$1 分钟')
+            .replace(/(\d+)\s*seconds?/gi, '$1 秒')
+            .replace(/,\s*/g, ' ')
+            .trim();
+          return '您已消耗' + degree + type + '额度，将在 ' + timeStr + ' 后完全重置。';
+        }
+        const mNotUsed = trimmed.match(RE_NOT_USED_LIMIT);
+        if (mNotUsed) {
+          const typeMap = { weekly: '每周', '5-hour': '5 小时', 'five-hour': '5 小时', daily: '每日' };
+          const type = typeMap[mNotUsed[1].toLowerCase()] || mNotUsed[1];
+          return '您尚未消耗任何' + type + '额度。';
+        }
+        if (RE_QUOTA_RESET_SWITCH.test(trimmed)) {
+          return raw.replace(RE_QUOTA_RESET_SWITCH, (_, m, dt) => '您的 ' + (dictLookup(m.trim()) || m.trim()) + ' 配额将于 ' + dt + ' 重置，请切换至其他可用模型以继续。');
+        }
+        if (RE_QUOTA_REACHED_SWITCH.test(trimmed)) {
+          return raw.replace(RE_QUOTA_REACHED_SWITCH, (_, m) => '您的 ' + (dictLookup(m.trim()) || m.trim()) + ' 配额已用尽，请切换至其他可用模型以继续。');
+        }
+        const mNeedCred = trimmed.match(RE_NEED_CREDITS_MODEL);
+        if (mNeedCred) {
+          const amtPart = mNeedCred[1] ? '至少 ' + mNeedCred[1] + ' 点' : '更多';
+          const modName = mNeedCred[2].trim() === 'this model' ? '该模型' : dictLookup(mNeedCred[2].trim()) || mNeedCred[2].trim();
+          let out = '发送消息需要' + amtPart + ' AI 点数。若需立即继续使用 ' + modName + '，请购买更多 AI 点数。';
+          if (mNeedCred[3]) out += ' 您套餐的基础配额将于 ' + mNeedCred[3] + ' 刷新。';
+          if (/enable AI Credit overages/i.test(trimmed)) out += ' 若需立即继续使用该模型，请开启 AI 点数超额使用。';
+          return out;
+        }
+        if (RE_BASELINE_QUOTA_REFRESH.test(trimmed)) {
+          return raw.replace(RE_BASELINE_QUOTA_REFRESH, '您套餐的基础配额将于 $1 刷新。');
         }
       } else if (firstUpper === 'H') {
         const mHey = trimmed.match(RE_HOME_HEY_NAME);
@@ -1644,12 +2714,9 @@
               (mAutoFig[3] ? '，并复用 ' + mAutoFig[3].trim() : '')
           );
         }
-      } else if (firstUpper === 'O') {
-        if (RE_ORCHESTRATOR_MODEL.test(trimmed)) {
-          return raw.replace(RE_ORCHESTRATOR_MODEL, '编排器 ($1)');
-        }
       }
 
+      // 跨首字母动态模型提示与限额规则（长度与特征子串前置门控，防止长文本回溯与普通英语短语误伤）
       if (trimmed.length < 220 && trimmed.includes('offload routine steps')) {
         const mOffload = trimmed.match(RE_MODEL_OFFLOAD_DESC);
         if (mOffload) {
@@ -1682,6 +2749,7 @@
           return raw.replace(trimmed, () => mPeriodLim[1].trim() + ' ' + pZh + '限额');
         }
       }
+
       if (trimmed.length < 64) {
         if (RE_KEY_QUEUES_AFTER.test(trimmed)) {
           return raw.replace(RE_KEY_QUEUES_AFTER, '$1 当前轮次结束后排队发送');
@@ -1720,124 +2788,239 @@
     }
 
     function translateSingleAttr(el, attrName, origDataAttr, customResolver) {
+      const verProp = '__ag_attr_ver_' + attrName;
+      const lastDataAttr = origDataAttr + '-last';
       const cur = el.getAttribute(attrName);
-      if (!cur) return;
+      if (!cur) {
+        if (el.hasAttribute(origDataAttr)) el.removeAttribute(origDataAttr);
+        if (el.hasAttribute(lastDataAttr)) el.removeAttribute(lastDataAttr);
+        delete el[verProp];
+        return;
+      }
       const savedOrig = el.getAttribute(origDataAttr);
-      const savedLast = el.getAttribute(origDataAttr + '-last');
-      const origVal = savedOrig && savedLast === cur ? savedOrig : cur;
+      const savedLast = el.getAttribute(lastDataAttr);
+      if (savedOrig !== null && savedLast === cur && el[verProp] === PATCH_VERSION) {
+        return;
+      }
+      const origVal = savedOrig !== null && savedLast === cur ? savedOrig : cur;
       const trimmed = origVal.trim();
-      const nextVal = customResolver ? customResolver(trimmed) : typeof DICT[trimmed] === 'string' ? DICT[trimmed] : null;
+      const shouldSkipAttr = attrName === 'aria-label' && SKIP_ARIA_LABEL_VALUES.has(trimmed);
+      const nextVal = shouldSkipAttr
+        ? null
+        : customResolver
+        ? customResolver(trimmed, el)
+        : typeof dictLookup(trimmed) === 'string'
+        ? dictLookup(trimmed)
+        : null;
       if (typeof nextVal === 'string') {
-        el.setAttribute(origDataAttr, origVal);
-        el.setAttribute(origDataAttr + '-last', nextVal);
+        if (savedOrig !== origVal) el.setAttribute(origDataAttr, origVal);
+        if (savedLast !== nextVal) el.setAttribute(lastDataAttr, nextVal);
+        el[verProp] = PATCH_VERSION;
         if (cur !== nextVal) {
           el.setAttribute(attrName, nextVal);
         }
-      } else if (savedOrig && savedLast === cur) {
-        el.setAttribute(attrName, savedOrig);
-        el.removeAttribute(origDataAttr);
-        el.removeAttribute(origDataAttr + '-last');
+      } else {
+        if (savedOrig !== null && savedLast === cur) {
+          el.setAttribute(attrName, savedOrig);
+        }
+        if (savedOrig !== null) el.removeAttribute(origDataAttr);
+        if (savedLast !== null) el.removeAttribute(lastDataAttr);
+        el[verProp] = PATCH_VERSION;
       }
+    }
+
+    function resolveAttrTranslation(atrim, el) {
+      const directHit = dictLookup(atrim);
+      if (typeof directHit === 'string') return directHit;
+      const mModel = atrim.match(RE_ARIA_MODEL);
+      if (mModel) {
+        let mName = mModel[1].trim();
+        if (mName === 'Select model' || mName === 'Select Model') return '模型，当前：选择模型';
+        const directModelZh = dictLookup(mName) || computeTextTranslation(mName, el);
+        if (directModelZh) {
+          mName = directModelZh;
+        } else {
+          const mEff = mName.match(RE_EFFORT_SUFFIX);
+          if (mEff) {
+            const effRaw = mEff[2] || mEff[3];
+            const effZh = EFFORT_MAP[effRaw.replace(/\s+/g, ' ').toLowerCase()] || effRaw;
+            const baseRaw = mEff[1].trim();
+            const baseZh = dictLookup(baseRaw) || computeTextTranslation(baseRaw, el) || baseRaw;
+            const ctxTail = mEff[4] ? ' · ' + mEff[4].trim() : '';
+            mName = baseZh + (mEff[2] ? ' (' + effZh + ')' : ' · ' + effZh) + ctxTail;
+          }
+        }
+        return '模型，当前：' + mName;
+      }
+      const lookupPerm = (s) =>
+        dictLookup(s) || dictLookup(s.charAt(0).toUpperCase() + s.slice(1)) || s;
+      const mPermSel = atrim.match(RE_ARIA_PERM_SEL);
+      if (mPermSel) {
+        const pMode = mPermSel[1].trim();
+        return '权限模式，当前：' + lookupPerm(pMode);
+      }
+      const mPermFixed = atrim.match(RE_ARIA_PERM_FIXED);
+      if (mPermFixed) {
+        const pMode = mPermFixed[1].trim();
+        const rawNote = (mPermFixed[2] || mPermFixed[3] || '').trim();
+        if (!rawNote) {
+          return '权限模式：' + lookupPerm(pMode);
+        }
+        const mappedNote =
+          rawNote.toLowerCase() === 'cannot be changed mid-conversation'
+            ? '对话中途无法更改'
+            : dictLookup(rawNote) || computeTextTranslation(rawNote, el) || rawNote;
+        return '权限模式：' + lookupPerm(pMode) + '（' + mappedNote + '）';
+      }
+      const mGoTurn = atrim.match(RE_ARIA_GOTO_TURN);
+      if (mGoTurn) {
+        return '跳转至第 ' + mGoTurn[1] + ' / ' + mGoTurn[2] + ' 轮对话';
+      }
+      const mTurn = atrim.match(RE_ARIA_TURN);
+      if (mTurn) {
+        if (mTurn[3] && mTurn[4]) {
+          return '第 ' + mTurn[3] + ' / ' + mTurn[4] + ' 轮对话';
+        }
+        const roleZh = mTurn[2].toLowerCase() === 'user' ? '用户' : 'Agent';
+        return '第 ' + mTurn[1] + ' 轮对话（' + roleZh + '）';
+      }
+      const mOlder = atrim.match(RE_ARIA_LOAD_OLDER);
+      if (mOlder) {
+        if (mOlder[3] && mOlder[4]) {
+          return (/^no/i.test(mOlder[2]) ? '没有更早的消息' : '加载更早的消息') + '（当前显示 ' + mOlder[3] + ' / ' + mOlder[4] + '）';
+        }
+        return '加载更早的 ' + mOlder[1] + ' 轮对话';
+      }
+      const mBranch = atrim.match(RE_ARIA_BRANCH);
+      if (mBranch) {
+        const bName = mBranch[1].trim();
+        return '分支，当前：' + (bName === 'Select branch' ? '选择分支' : bName);
+      }
+      const mProj = atrim.match(RE_ARIA_PROJECT);
+      if (mProj) {
+        const pName = mProj[1].trim();
+        return '选择项目，当前：' + (pName === 'No project' || pName === 'No Project' ? '未关联项目' : pName);
+      }
+      const mLoc = atrim.match(RE_ARIA_LOCATION);
+      if (mLoc) {
+        const locName = mLoc[1].trim();
+        const mappedLoc =
+          locName === 'This Computer' ? '本机' : locName === 'Remote' ? '远程' : dictLookup(locName) || locName;
+        return 'Agent 运行位置，当前：' + mappedLoc;
+      }
+      const mVer = atrim.match(RE_ARIA_VERSION);
+      if (mVer) {
+        return '版本 ' + mVer[1].trim();
+      }
+      const mExtLink = atrim.match(RE_OPENS_EXT_LINK);
+      if (mExtLink) {
+        return '打开外部链接：' + mExtLink[1].trim();
+      }
+      const mOpenConv = atrim.match(RE_OPEN_CONV_ID);
+      if (mOpenConv) {
+        return '打开对话 ' + mOpenConv[1];
+      }
+      const mOpenPlugin = atrim.match(RE_OPEN_PLUGIN_NAME);
+      if (mOpenPlugin) {
+        return '打开 ' + mOpenPlugin[1].trim() + ' 插件';
+      }
+      const mEditSq = atrim.match(RE_EDIT_SIDE_Q_TITLE);
+      if (mEditSq) {
+        return '编辑支线提问标题：' + mEditSq[1].trim();
+      }
+      if (IS_SWARM_PLUGIN_FRAME) {
+        const mLiveTip = atrim.match(RE_SWARM_LIVE_TIP);
+        if (mLiveTip) {
+          return (mLiveTip[1] === 'Thinking' ? '思考中：' : '最新动作：') + mLiveTip[2];
+        }
+        const mRunsOn = atrim.match(RE_SWARM_RUNS_ON);
+        if (mRunsOn) {
+          return '运行于 ' + mRunsOn[1].trim();
+        }
+        const mNarRead = atrim.match(RE_SWARM_NARRATOR_READ);
+        if (mNarRead) {
+          return '纪要员已读至 #' + mNarRead[1] + ' / 共 ' + mNarRead[2] + ' 条';
+        }
+        const mPostsSince = atrim.match(RE_SWARM_POSTS_SINCE_UPD);
+        if (mPostsSince) {
+          return '视图更新后新增 ' + mPostsSince[1] + ' 条发言';
+        }
+        const mNarFail = atrim.match(RE_SWARM_NARRATOR_FAILED_TIP);
+        if (mNarFail) {
+          return '纪要员上一步失败：' + mNarFail[1].trim();
+        }
+        const mPostedCh = atrim.match(RE_SWARM_POSTED_IN_CH);
+        if (mPostedCh) {
+          return '发布于 #' + mPostedCh[1] + '；点击仅看 #' + mPostedCh[1];
+        }
+        const mGotoSeq = atrim.match(RE_SWARM_GOTO_SEQ);
+        if (mGotoSeq) {
+          return '跳至 #' + mGotoSeq[1] + (mGotoSeq[2] ? '（' + mGotoSeq[2].trim() + '）' : '');
+        }
+        if (el && el.classList && el.classList.contains('o2-tprog')) {
+          const mTpDone = atrim.match(RE_SWARM_TPROG_DONE);
+          if (mTpDone) {
+            return '已完成 ' + mTpDone[1].trim();
+          }
+        }
+      }
+      if (
+        atrim === 'File' &&
+        (IS_SWARM_PLUGIN_FRAME || (el && el.classList && el.classList.contains('segmented')))
+      ) {
+        return '文件';
+      }
+      if (
+        el &&
+        el.getAttribute &&
+        el.getAttribute('data-testid') === 'running-row-stop' &&
+        /^Stop\s+(.+)$/i.test(atrim)
+      ) {
+        return '停止 ' + atrim.replace(/^Stop\s+/i, '');
+      }
+      return computeTextTranslation(atrim, el);
     }
 
     function translateElementAttrs(el) {
       if (!el || el.nodeType !== 1) return;
-      translateSingleAttr(el, 'title', 'data-ag-orig-title', null);
-      translateSingleAttr(el, 'placeholder', 'data-ag-orig-placeholder', null);
-      translateSingleAttr(el, 'aria-label', 'data-ag-orig-aria-label', (atrim) => {
-        if (typeof DICT[atrim] === 'string') return DICT[atrim];
-        if (atrim.indexOf('\u2018') !== -1 || atrim.indexOf('\u2019') !== -1) {
-          RE_CURLY_APOS.lastIndex = 0;
-          const foldedAria = atrim.replace(RE_CURLY_APOS, "'");
-          if (foldedAria !== atrim && typeof DICT[foldedAria] === 'string') return DICT[foldedAria];
+      translateSingleAttr(el, 'title', 'data-ag-orig-title', resolveAttrTranslation);
+      translateSingleAttr(el, 'placeholder', 'data-ag-orig-placeholder', resolveAttrTranslation);
+      translateSingleAttr(el, 'aria-label', 'data-ag-orig-aria-label', resolveAttrTranslation);
+    }
+
+    function translateMarkdownChromeSubtree(container) {
+      if (!container || container.nodeType !== 1) return;
+      if (isMarkdownChromeAttrTarget(container)) {
+        translateElementAttrs(container);
+      }
+      if (!container.querySelectorAll) return;
+      const els = container.querySelectorAll(MARKDOWN_UI_ATTR_SELECTOR);
+      for (let i = 0; i < els.length; i++) {
+        const el = els[i];
+        if (!el.closest('pre, code, .monaco-editor, .monaco-diff-editor, .xterm')) {
+          translateElementAttrs(el);
         }
-        const mBranch = atrim.match(RE_ARIA_BRANCH);
-        if (mBranch) {
-          const bName = mBranch[1].trim();
-          return '分支，当前：' + (bName === 'Select branch' ? '选择分支' : bName);
-        }
-        const mProj = atrim.match(RE_ARIA_PROJECT);
-        if (mProj) {
-          const pName = mProj[1].trim();
-          return '选择项目，当前：' + (pName === 'No project' ? '未关联项目' : pName);
-        }
-        const mModel = atrim.match(RE_ARIA_MODEL);
-        if (mModel) {
-          let mName = mModel[1].trim();
-          if (mName === 'Select model' || mName === 'Select Model') return '模型，当前：选择模型';
-          const directModelZh = dictExactFold(mName) || computeTextTranslation(mName, el);
-          if (directModelZh) {
-            mName = directModelZh;
-          } else {
-            const mEff = mName.match(RE_EFFORT_SUFFIX);
-            if (mEff) {
-              const effRaw = mEff[2] || mEff[3];
-              const effZh = EFFORT_MAP[effRaw.replace(/\s+/g, ' ').toLowerCase()] || effRaw;
-              const baseRaw = mEff[1].trim();
-              const baseZh = dictExactFold(baseRaw) || computeTextTranslation(baseRaw, el) || baseRaw;
-              const ctxTail = mEff[4] ? ' · ' + mEff[4].trim() : '';
-              mName = baseZh + (mEff[2] ? ' (' + effZh + ')' : ' · ' + effZh) + ctxTail;
-            }
-          }
-          return '模型，当前：' + mName;
-        }
-        const lookupPerm = (s) => dictExactFold(s) || dictExactFold(s.charAt(0).toUpperCase() + s.slice(1)) || s;
-        const mPermSel = atrim.match(RE_ARIA_PERM_SEL);
-        if (mPermSel) {
-          const pMode = mPermSel[1].trim();
-          return '权限模式，当前：' + lookupPerm(pMode);
-        }
-        const mPermFixed = atrim.match(RE_ARIA_PERM_FIXED);
-        if (mPermFixed) {
-          const pMode = mPermFixed[1].trim();
-          const rawNote = (mPermFixed[2] || mPermFixed[3] || '').trim();
-          if (!rawNote) {
-            return '权限模式：' + lookupPerm(pMode);
-          }
-          const mappedNote =
-            rawNote.toLowerCase() === 'cannot be changed mid-conversation'
-              ? '对话中途无法更改'
-              : dictExactFold(rawNote) || computeTextTranslation(rawNote, el) || rawNote;
-          return '权限模式：' + lookupPerm(pMode) + '（' + mappedNote + '）';
-        }
-        const mGoTurn = atrim.match(RE_ARIA_GOTO_TURN);
-        if (mGoTurn) {
-          return '跳转至第 ' + mGoTurn[1] + ' / ' + mGoTurn[2] + ' 轮对话';
-        }
-        const mTurn = atrim.match(RE_ARIA_TURN);
-        if (mTurn) {
-          if (mTurn[3] && mTurn[4]) {
-            return '第 ' + mTurn[3] + ' / ' + mTurn[4] + ' 轮对话';
-          }
-          const roleZh = mTurn[2].toLowerCase() === 'user' ? '用户' : 'Agent';
-          return '第 ' + mTurn[1] + ' 轮对话（' + roleZh + '）';
-        }
-        const mOlder = atrim.match(RE_ARIA_LOAD_OLDER);
-        if (mOlder) {
-          if (mOlder[3] && mOlder[4]) {
-            return (/^no/i.test(mOlder[2]) ? '没有更早的消息' : '加载更早的消息') + '（当前显示 ' + mOlder[3] + ' / ' + mOlder[4] + '）';
-          }
-          return '加载更早的 ' + mOlder[1] + ' 轮对话';
-        }
-        const mLoc = atrim.match(RE_ARIA_LOCATION);
-        if (mLoc) {
-          const locName = mLoc[1].trim();
-          const mappedLoc =
-            locName === 'This Computer' ? '本机' : locName === 'Remote' ? '远程' : dictExactFold(locName) || locName;
-          return 'Agent 运行位置，当前：' + mappedLoc;
-        }
-        const mVer = atrim.match(RE_ARIA_VERSION);
-        if (mVer) {
-          return '版本 ' + mVer[1].trim();
-        }
-        return null;
-      });
+      }
     }
 
     const walkerFilter = {
       acceptNode(node) {
         if (node.nodeType === 1) {
           if (node.matches && node.matches(EXCLUDE_SELECTOR)) {
+            if (node.isConnected && node.matches(TEXT_IMMUTABLE_EXCLUDE_SELECTOR)) {
+              immutableTextExclCache.set(node, true);
+            }
+            if (node.matches('[data-markdown-root]')) {
+              translateMarkdownChromeSubtree(node);
+              return NodeFilter.FILTER_REJECT;
+            }
+            if (
+              isFormAttrTarget(node) &&
+              canTranslateElementAttrs(node) &&
+              (node.hasAttribute('title') || node.hasAttribute('aria-label') || node.hasAttribute('placeholder'))
+            ) {
+              translateElementAttrs(node);
+            }
             return NodeFilter.FILTER_REJECT;
           }
           if (
@@ -1860,7 +3043,21 @@
         }
         return;
       }
-      if (root.nodeType !== 1 || isExcludedElement(root)) return;
+      if (root.nodeType !== 1) return;
+      if (isExcludedElement(root)) {
+        if (root.closest && root.closest('[data-markdown-root]')) {
+          translateMarkdownChromeSubtree(root);
+          return;
+        }
+        if (
+          isFormAttrTarget(root) &&
+          canTranslateElementAttrs(root) &&
+          (root.hasAttribute('title') || root.hasAttribute('aria-label') || root.hasAttribute('placeholder'))
+        ) {
+          translateElementAttrs(root);
+        }
+        return;
+      }
 
       if (
         root.hasAttribute &&
@@ -1879,7 +3076,10 @@
       }
     }
 
-    scanAndTranslate(document.body);
+    scanBodyFn = scanAndTranslate;
+    if (document.body) {
+      scanAndTranslate(document.body);
+    }
 
     const dirtyRoots = new Set();
     let pending = false;
@@ -1931,22 +3131,35 @@
     }
 
     window.__ag_i18n_observer = new MutationObserver((mutations) => {
+      const batchSafeSet = new Set();
       for (let i = 0; i < mutations.length; i++) {
         const m = mutations[i];
         if (m.type === 'characterData') {
           const t = m.target;
-          if (t && t.parentElement && !isExcludedElement(t.parentElement)) {
+          if (t && t.parentElement && !isExcludedElement(t.parentElement, batchSafeSet)) {
             dirtyRoots.add(t);
           }
         } else if (m.type === 'attributes') {
           const el = m.target;
-          if (el && el.nodeType === 1 && !isExcludedElement(el)) {
+          if (el && el.nodeType === 1 && canTranslateElementAttrs(el, batchSafeSet)) {
             try {
               translateElementAttrs(el);
             } catch (e) {}
           }
         } else if (m.type === 'childList' && m.addedNodes.length > 0) {
-          if (m.target && m.target.nodeType === 1 && isExcludedElement(m.target)) {
+          if (m.target && m.target.nodeType === 1 && isExcludedElement(m.target, batchSafeSet)) {
+            if (m.target.closest && m.target.closest('[data-markdown-root]')) {
+              for (let j = 0; j < m.addedNodes.length; j++) {
+                const n = m.addedNodes[j];
+                if (
+                  n.nodeType === 1 &&
+                  ((n.matches && n.matches(MARKDOWN_UI_ATTR_SELECTOR)) ||
+                    (n.firstElementChild && n.querySelector && n.querySelector(MARKDOWN_UI_ATTR_SELECTOR)))
+                ) {
+                  dirtyRoots.add(n);
+                }
+              }
+            }
             continue;
           }
           for (let j = 0; j < m.addedNodes.length; j++) {
@@ -1962,19 +3175,43 @@
       }
     });
 
-    const targetNode = document.body || document.documentElement;
-    if (targetNode) {
-      window.__ag_i18n_observer.observe(targetNode, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-        attributes: true,
-        attributeFilter: ['title', 'aria-label', 'placeholder']
-      });
+    if (document.body) {
+      window.__ag_i18n_observer.observe(document.body, I18N_OBS_OPTS);
     }
-  } else {
+  } else if (document.body) {
     // 若用户在配置中关闭了 i18n 模块，实时将已翻译的文本与属性还原为原始英文
     restoreAllTranslations(document.body);
+  }
+
+  // 若由 Page.addScriptToEvaluateOnNewDocument 在 <head> 早期触发（此时 document.body === null），
+  // 挂载单次 DOMContentLoaded 钩子，确保样式排在原生 <link> 之后，并在 body 就绪后完成监听挂载
+  if (document.body) {
+    window.__ag_body_ready = true;
+  } else {
+    window.__ag_body_ready = false;
+    window.__ag_dcl_handler = () => {
+      window.__ag_dcl_handler = null;
+      ensureStylesAtEndOfHead();
+      syncChuanbanPreset();
+      checkRouteAndMountMetrics();
+      if (MODULES.i18n && document.body) {
+        if (typeof scanBodyFn === 'function') {
+          try {
+            scanBodyFn(document.body);
+          } catch (e) {}
+        }
+        if (window.__ag_i18n_observer) {
+          try {
+            window.__ag_i18n_observer.disconnect();
+            window.__ag_i18n_observer.observe(document.body, I18N_OBS_OPTS);
+          } catch (e) {}
+        }
+      } else if (!MODULES.i18n && document.body) {
+        restoreAllTranslations(document.body);
+      }
+      window.__ag_body_ready = true;
+    };
+    window.addEventListener('DOMContentLoaded', window.__ag_dcl_handler, { once: true });
   }
 
   // ============================================================================
@@ -1995,7 +3232,12 @@
       return window.__ag_last_metrics || null;
     },
     syncPreset: syncChuanbanPreset,
-    ensureMetricsPill
+    ensureMetricsPill,
+    onCleanup(fn) {
+      if (typeof fn === 'function') {
+        window.__ag_cleanup_fns.push(fn);
+      }
+    }
   };
 
   if (MODULES.customJs && boot.customJs && typeof boot.customJs === 'string' && boot.customJs.trim()) {
