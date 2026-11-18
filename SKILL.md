@@ -105,6 +105,7 @@ node install.mjs install --sync-user
 
 - `--sync-user`：先把已有 `user/` 备份到 `backups/<时间戳>-user/`，再覆盖 `config.json`、`custom.css`、`i18n.override.json`、`custom.js`。不带此旗标时，已有 `user/` 文件仍然不覆盖。
 - `--target-dir <dir>` 不是默认安装目录，且没有 `--register-service` 时，只复制文件，不改 `argv.json`、不写包装脚本、不注册自启，也不对本机正在运行的服务执行 `--once`。同一条件下 `doctor` / `verify` / `rollback` / `uninstall` 也不停、不改本机服务。需要恢复全局注册时加上 `--register-service`。
+- `user/config.json` 支持 UTF-8 BOM。常规安装会跳过无法读取、语法无效或根节点不是对象的已有配置，并保留原文件。
 - `rollback` 只采用同时包含 `daemon.mjs` 与 `runtime.js` 的备份，并跳过名字以 `-user` 结尾的目录。
 - `node install.mjs pack` 生成发行 zip。
 - Windows 上 `install-fonts` 在复制文件并写入注册表之后广播 `AddFontResource`。广播失败不改变 `ok: true`。
@@ -113,6 +114,7 @@ node install.mjs install --sync-user
 ```bash
 node install.mjs verify
 ```
+守护进程与 `verify` 会先识别经典版宿主，跳过内置浏览器打开的普通本地网页。
 当终端输出 `"ok": true` 且显示 `"version": "20261115-v5.3.0-..."`、`"bodyReady": true`、`"themeStyle": true`、`"themeMode": "light" | "dark"` 时，即代表昼夜双模式主题、字体、汉化与指标胶囊已 100% 注入成功。
 
 ---

@@ -549,8 +549,14 @@ function ensureArgvRemoteDebugging(channel = 'auto') {
 }
 
 function isAllowedOrigin(urlStr) {
-  if (!urlStr || typeof urlStr !== 'string') return false;
-  return ALLOWED_ORIGINS.some((prefix) => urlStr.startsWith(prefix));
+  try {
+    const url = new URL(urlStr);
+    const isInternal = url.protocol === 'vscode-file:';
+    const isLoopback = ['http:', 'https:'].includes(url.protocol) && ['127.0.0.1', 'localhost'].includes(url.hostname);
+    return (isInternal || isLoopback) && ALLOWED_ORIGINS.some((prefix) => urlStr.startsWith(prefix));
+  } catch {
+    return false;
+  }
 }
 
 function isAgentPanelUrl(urlStr) {
@@ -643,15 +649,18 @@ async function inspectLiveWindow(portFileOrEnv, fallbackPort = 9222) {
     return { reachable: false, reason: 'No active CDP port responded (checked DevToolsActivePort & fallback port 9222)' };
   }
 
-  const chosen = found.find((item) => isAgentPanelUrl(item.target.url)) || found.find((item) => item.target.type === 'page');
-  if (!chosen) {
+  if (found.length === 0) {
     return { reachable: true, port: respondedPort, pages: 0, reason: 'No active workbench page target' };
   }
 
-  const page = chosen.target;
-  const port = chosen.port;
-  const state = await new Promise((resolve) => {
-    const ws = new WebSocket(page.webSocketDebuggerUrl);
+  const inspectTarget = (page) => new Promise((resolve) => {
+    let ws;
+    try {
+      ws = new WebSocket(page.webSocketDebuggerUrl);
+    } catch {
+      resolve(null);
+      return;
+    }
     const timer = setTimeout(() => {
       try {
         ws.close();
@@ -664,7 +673,19 @@ async function inspectLiveWindow(portFileOrEnv, fallbackPort = 9222) {
           id: 1,
           method: 'Runtime.evaluate',
           params: {
-            expression: `({
+            expression: `(() => {
+              const isLoopback = ['http:', 'https:'].includes(location.protocol)
+                && ['127.0.0.1', 'localhost'].includes(location.hostname);
+              const isHost = location.protocol === 'vscode-file:' || (isLoopback && (
+                window.__APP_CONFIG__?.productName === 'antigravity' ||
+                (typeof window.electronNative?.setTitleBarOverlay === 'function' &&
+                 typeof window.nativeStorage?.getItems === 'function') ||
+                (typeof window.electronNative?.getZoomLevel === 'function' &&
+                 typeof window.electronNative?.wcvBrowser?.setThemeColor === 'function') ||
+                document.querySelector('link[href*="/jetbox.css"], body[data-agy-theme], body[data-newux-theme], [id="antigravity.agentSidePanelInputBox"]')
+              ));
+              if (!isHost || !document.documentElement) return null;
+              return {
               version: window.__ag_patch_version || null,
               bodyReady: window.__ag_body_ready === true,
               hasStyle: !!document.getElementById('ag-custom-fonts'),
@@ -696,7 +717,8 @@ async function inspectLiveWindow(portFileOrEnv, fallbackPort = 9222) {
               protoSafe: window.__ag_i18n_dict ? Object.getPrototypeOf(window.__ag_i18n_dict) === null : false,
               pillMounted: !!document.getElementById('ag-live-metrics-pill'),
               pillText: document.getElementById('ag-live-metrics-pill')?.textContent || null
-            })`,
+              };
+            })()`,
             returnByValue: true
           }
         })
@@ -718,13 +740,18 @@ async function inspectLiveWindow(portFileOrEnv, fallbackPort = 9222) {
     });
   });
 
-  return {
-    reachable: true,
-    port,
-    targetId: page.id,
-    title: page.title,
-    state
-  };
+  // 优先检查 Agent 面板，同时跳过内置浏览器打开的普通本地网页。
+  const panels = found.filter(({ target }) => isAgentPanelUrl(target.url));
+  const pages = found.filter(({ target }) => !isAgentPanelUrl(target.url));
+  let firstHost = null;
+  for (const { port, target } of [...panels, ...pages]) {
+    const state = await inspectTarget(target);
+    if (!state) continue;
+    const result = { reachable: true, port, targetId: target.id, title: target.title, state };
+    if (state.hasStyle) return result;
+    firstHost ??= result;
+  }
+  return firstHost || { reachable: true, port: respondedPort, reason: 'No confirmed Antigravity host target' };
 }
 
 // ============================================================================
@@ -1074,37 +1101,55 @@ async function runInstall() {
     }
   }
 
-  // 更新 user/config.json（仅在显式传入 CLI 参数或首次初始化时更新对应字段，保留用户自定义）
+  // 兼容 Windows UTF-8 BOM，仅补齐缺省值或应用显式参数。
   const userConfigPath = path.join(targetUser, 'config.json');
-  const currentCfg = fs.existsSync(userConfigPath)
-    ? JSON.parse(fs.readFileSync(userConfigPath, 'utf8'))
-    : {};
-  if (typeof currentCfg.enabled !== 'boolean') currentCfg.enabled = true;
-  if (cliChannel) {
-    currentCfg.channel = cliChannel;
-  } else if (!currentCfg.channel) {
-    currentCfg.channel = 'auto';
+  let currentCfg;
+  let originalConfig;
+  try {
+    originalConfig = fs.readFileSync(userConfigPath, 'utf8');
+    currentCfg = JSON.parse(originalConfig.replace(/^\uFEFF/, ''));
+  } catch (err) {
+    if (err.code === 'ENOENT') currentCfg = {};
   }
-  if (preset) {
-    currentCfg.preset = preset;
-  } else if (!currentCfg.preset) {
-    currentCfg.preset = 'high-contrast';
-  }
-  if (scheme) {
-    currentCfg.scheme = scheme;
-  } else if (currentCfg.scheme !== 'light' && currentCfg.scheme !== 'dark' && currentCfg.scheme !== 'auto') {
-    currentCfg.scheme = 'auto';
-  }
-  // 字体 id 缺失或非法才写入默认值。已有布尔 modules.i18n 不在这里改写。
-  const UI_FONT_IDS = ['wenyuan-serif', 'wenyuan-sans', 'anthropic', 'system'];
-  const CODE_FONT_IDS = ['maple-bright', 'maple-mono', 'anthropic', 'sarasa'];
-  if (!currentCfg.fonts || typeof currentCfg.fonts !== 'object' || Array.isArray(currentCfg.fonts)) {
-    currentCfg.fonts = { ui: 'wenyuan-serif', code: 'maple-bright' };
+  if (currentCfg && typeof currentCfg === 'object' && !Array.isArray(currentCfg)) {
+    const before = JSON.stringify(currentCfg);
+    if (typeof currentCfg.enabled !== 'boolean') currentCfg.enabled = true;
+    if (cliChannel || !currentCfg.channel) currentCfg.channel = cliChannel || 'auto';
+    if (preset || !currentCfg.preset) currentCfg.preset = preset || 'high-contrast';
+    if (scheme || !['light', 'dark', 'auto'].includes(currentCfg.scheme)) currentCfg.scheme = scheme || 'auto';
+    // 字体 id 缺失或非法才写入默认值。已有布尔 modules.i18n 不在这里改写。
+    const UI_FONT_IDS = ['wenyuan-serif', 'wenyuan-sans', 'anthropic', 'system'];
+    const CODE_FONT_IDS = ['maple-bright', 'maple-mono', 'anthropic', 'sarasa'];
+    if (!currentCfg.fonts || typeof currentCfg.fonts !== 'object' || Array.isArray(currentCfg.fonts)) {
+      currentCfg.fonts = { ui: 'wenyuan-serif', code: 'maple-bright' };
+    } else {
+      if (!UI_FONT_IDS.includes(currentCfg.fonts.ui)) currentCfg.fonts.ui = 'wenyuan-serif';
+      if (!CODE_FONT_IDS.includes(currentCfg.fonts.code)) currentCfg.fonts.code = 'maple-bright';
+    }
+    if (JSON.stringify(currentCfg) !== before) {
+      const tmpConfig = `${userConfigPath}.tmp-${crypto.randomUUID()}`;
+      try {
+        fs.writeFileSync(tmpConfig, JSON.stringify(currentCfg, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+        const latest = fs.existsSync(userConfigPath) ? fs.readFileSync(userConfigPath, 'utf8') : undefined;
+        if (latest === originalConfig) {
+          fs.renameSync(tmpConfig, userConfigPath);
+        } else {
+          currentCfg = null;
+          console.warn('[Install] Warning: user/config.json changed during install; leaving it untouched.');
+        }
+      } catch (err) {
+        currentCfg = null;
+        console.warn(`[Install] Warning: could not update user/config.json (${err.code || 'write failed'}).`);
+      } finally {
+        try {
+          fs.rmSync(tmpConfig, { force: true });
+        } catch {}
+      }
+    }
   } else {
-    if (UI_FONT_IDS.indexOf(currentCfg.fonts.ui) === -1) currentCfg.fonts.ui = 'wenyuan-serif';
-    if (CODE_FONT_IDS.indexOf(currentCfg.fonts.code) === -1) currentCfg.fonts.code = 'maple-bright';
+    currentCfg = null;
+    console.warn('[Install] Warning: existing user/config.json is invalid or unreadable; leaving it untouched.');
   }
-  fs.writeFileSync(userConfigPath, JSON.stringify(currentCfg, null, 2) + '\n', 'utf8');
 
   const realDaemon = path.join(targetCore, 'daemon.mjs');
   let argvStatus = { skipped: true, reason: 'custom-target-dir' };
@@ -1112,7 +1157,7 @@ async function runInstall() {
   let live = { skipped: true, reason: 'custom-target-dir' };
   if (!sandboxTarget) {
     // 自动检查并修补 ~/.antigravity/argv.json (remote-debugging-port)
-    argvStatus = ensureArgvRemoteDebugging(currentCfg.channel);
+    argvStatus = ensureArgvRemoteDebugging(currentCfg?.channel || channel);
 
     // 创建兼容包装脚本 ~/.gemini/antigravity/scripts/antigravity-font-daemon.mjs（使用 pathToFileURL 兼容 Windows C:\ 路径）
     const scriptsDir = path.join(os.homedir(), '.gemini', 'antigravity', 'scripts');

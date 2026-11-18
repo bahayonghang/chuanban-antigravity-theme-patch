@@ -3,7 +3,7 @@
  * 纯正浏览器端注入脚本（零模板字符串双重转义）。
  * 由 core/daemon.mjs 读取并将文件末尾的启动载荷占位符替换为实时配置与资源对象。
  */
-((boot) => {
+(function runBoot(boot, afterDomReady = false) {
   // 0. 顶层窗口隔离：仅允许主窗口与官方内置 Swarm 协作侧栏插件帧（绝不注入 Artifact / HTML 预览等子 iframe）
   const IS_SWARM_PLUGIN_FRAME = !!(
     window.location &&
@@ -24,6 +24,43 @@
   };
   if (window.top !== window && !isAgentPanelWindow() && !IS_SWARM_PLUGIN_FRAME) return;
   if (!boot || typeof boot !== 'object') return;
+
+  // NewDocument 可早于 <html> 或宿主标记。重注入时收回上一轮的等待句柄。
+  if (window.__ag_boot_dom_ready) {
+    window.removeEventListener('DOMContentLoaded', window.__ag_boot_dom_ready);
+    window.__ag_boot_dom_ready = null;
+  }
+  if (window.__ag_boot_root_observer) {
+    window.__ag_boot_root_observer.disconnect();
+    window.__ag_boot_root_observer = null;
+  }
+
+  const loc = window.location;
+  const internal = IS_SWARM_PLUGIN_FRAME || loc.protocol === 'vscode-file:';
+  if (!internal &&
+      (!['http:', 'https:'].includes(loc.protocol) || !['127.0.0.1', 'localhost'].includes(loc.hostname))) return;
+  const preloadHost =
+    window.__APP_CONFIG__?.productName === 'antigravity' ||
+    (typeof window.electronNative?.setTitleBarOverlay === 'function' &&
+     typeof window.nativeStorage?.getItems === 'function') ||
+    (typeof window.electronNative?.getZoomLevel === 'function' &&
+     typeof window.electronNative?.wcvBrowser?.setThemeColor === 'function');
+  const domHost = document.querySelector(
+    'link[href*="/jetbox.css"], body[data-agy-theme], body[data-newux-theme], [id="antigravity.agentSidePanelInputBox"]'
+  );
+  if (!document.documentElement || (!internal && !preloadHost && !domHost)) {
+    if (afterDomReady || document.readyState !== 'loading') return;
+    window.__ag_boot_dom_ready = () => runBoot(boot, true);
+    window.addEventListener('DOMContentLoaded', window.__ag_boot_dom_ready, { once: true });
+    if (!document.documentElement && (internal || preloadHost) && typeof MutationObserver === 'function') {
+      const observer = new MutationObserver(() => {
+        if (document.documentElement) runBoot(boot);
+      });
+      window.__ag_boot_root_observer = observer;
+      observer.observe(document, { childList: true });
+    }
+    return;
+  }
 
   const PATCH_VERSION = boot.version || '20261115-v5.3.0';
   const DETECTED_OS =

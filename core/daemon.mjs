@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -62,8 +63,8 @@ const CLI_CHANNEL = getArg('--channel', null);
 
 function readJsonSafe(filePath, fallback = {}) {
   try {
-    if (!fs.existsSync(filePath)) return fallback;
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const value = JSON.parse(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
   } catch {
     return fallback;
   }
@@ -1953,6 +1954,23 @@ function parseConversationMetrics(cascadeId, endpointOrDir, precomputedState = n
 // 5. CDP 目标发现、WebSocket 会话挂载与热更新推送
 // ============================================================================
 const attachedTargets = new Map();
+const skippedNonHostTargets = new Map();
+
+// 仅在宿主指纹确认后注册绑定或执行注入。加载中的页面继续等待。
+const HOST_PROBE_EXPRESSION = `(() => {
+  if (location.protocol === 'vscode-file:') return 'host';
+  if (!['http:', 'https:'].includes(location.protocol) ||
+      !['127.0.0.1', 'localhost'].includes(location.hostname)) return 'non_host';
+  if (window.__APP_CONFIG__?.productName === 'antigravity' ||
+      (typeof window.electronNative?.setTitleBarOverlay === 'function' &&
+       typeof window.nativeStorage?.getItems === 'function') ||
+      (typeof window.electronNative?.getZoomLevel === 'function' &&
+       typeof window.electronNative?.wcvBrowser?.setThemeColor === 'function') ||
+      document.querySelector('link[href*="/jetbox.css"], body[data-agy-theme], body[data-newux-theme], [id="antigravity.agentSidePanelInputBox"]')) {
+    return 'host';
+  }
+  return document.readyState === 'loading' ? 'pending' : 'non_host';
+})()`;
 
 function readPort(portFile) {
   try {
@@ -1990,8 +2008,14 @@ function fetchTargets(port) {
 }
 
 function isAllowedOrigin(urlStr) {
-  if (!urlStr || typeof urlStr !== 'string') return false;
-  return activeConfig.allowedOrigins.some((prefix) => urlStr.startsWith(prefix));
+  try {
+    const url = new URL(urlStr);
+    const isInternal = url.protocol === 'vscode-file:';
+    const isLoopback = ['http:', 'https:'].includes(url.protocol) && ['127.0.0.1', 'localhost'].includes(url.hostname);
+    return (isInternal || isLoopback) && activeConfig.allowedOrigins.some((prefix) => urlStr.startsWith(prefix));
+  } catch {
+    return false;
+  }
 }
 
 function isAgentPanelUrl(urlStr) {
@@ -2021,21 +2045,30 @@ function attachTarget(target, endpoint) {
 
   return new Promise((resolveAttach) => {
     let settled = false;
+    let ws;
     const finishAttach = (ok) => {
       if (!settled) {
         settled = true;
+        clearTimeout(attachTimeout);
         resolveAttach(ok);
       }
     };
-    const attachTimeout = setTimeout(() => finishAttach(false), 2500);
+    const attachTimeout = setTimeout(() => {
+      ws?.close();
+      finishAttach(false);
+    }, 2500);
 
     try {
-      const ws = new WebSocket(wsUrl);
+      ws = new WebSocket(wsUrl);
       let msgId = 1;
       let activeCascadeId = '';
       let lastPushedHash = '';
       let lastRenderedSig = '';
       let evalScriptId = null;
+      let currentTargetUrl = target.url;
+      let hostConfirmed = false;
+      let documentGeneration = 0;
+      let checkingHost = false;
       const pendingCallbacks = new Map();
 
       const send = (method, params = {}) =>
@@ -2050,15 +2083,22 @@ function attachTarget(target, endpoint) {
             clearTimeout(timer);
             resolve(msg);
           });
-          ws.send(JSON.stringify({ id, method, params }));
+          try {
+            ws.send(JSON.stringify({ id, method, params }));
+          } catch {
+            const callback = pendingCallbacks.get(id);
+            pendingCallbacks.delete(id);
+            callback(null);
+          }
         });
 
       const updateNewDocScript = async () => {
+        if (!hostConfirmed) return;
         if (evalScriptId) {
           await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: evalScriptId });
           evalScriptId = null;
         }
-        if (activeConfig.enabled) {
+        if (hostConfirmed && activeConfig.enabled) {
           const addRes = await send('Page.addScriptToEvaluateOnNewDocument', { source: cachedInjectScript });
           if (addRes?.result?.identifier) {
             evalScriptId = addRes.result.identifier;
@@ -2067,11 +2107,13 @@ function attachTarget(target, endpoint) {
       };
 
       const inject = async () => {
+        if (!hostConfirmed) return false;
         const res = await send('Runtime.evaluate', {
           expression: cachedInjectScript,
           returnByValue: true
         });
-        if (res?.error) {
+        if (!res) return false;
+        if (res.error) {
           console.error(`[Daemon] Injection error on ${target.id}:`, res.error.message || res.error);
           return false;
         } else if (res?.result?.exceptionDetails) {
@@ -2087,7 +2129,7 @@ function attachTarget(target, endpoint) {
       };
 
       const syncMetricsForSession = async (force = false) => {
-        if (target.type === 'iframe' || !DatabaseSync || !activeConfig.modules.metrics || !activeConfig.enabled) return;
+        if (!hostConfirmed || target.type === 'iframe' || !DatabaseSync || !activeConfig.modules.metrics || !activeConfig.enabled) return;
 
         // 仅在尚未获知 activeCascadeId 或强制重同步时向前端发起 Runtime.evaluate，日常靠 __agRequestMetrics 绑定事件实时驱动
         if (!activeCascadeId || force) {
@@ -2106,7 +2148,7 @@ function attachTarget(target, endpoint) {
             activeCascadeId = detected;
           }
         }
-        if (!activeCascadeId) return;
+        if (!hostConfirmed || !activeCascadeId) return;
 
         // 先在 Node 本地通过 statSync 检查 .db/.db-wal 与子 Agent 复合签名（兼容 Windows WSL 按需懒探测），未变化则 0 WebSocket 通信直接返回
         const currentEndpoint = attachedTargets.get(target.id)?.endpoint || endpoint;
@@ -2154,32 +2196,81 @@ function attachTarget(target, endpoint) {
         }
       };
 
+      const detachNonHost = async (url) => {
+        hostConfirmed = false;
+        skippedNonHostTargets.set(target.id, { url, until: Date.now() + 15000 });
+        if (evalScriptId) {
+          const identifier = evalScriptId;
+          evalScriptId = null;
+          await send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+        }
+        ws.close();
+      };
+
       const checkAndInject = async () => {
+        if (!initialAttachDone || checkingHost || ws.readyState !== WebSocket.OPEN) return;
+        checkingHost = true;
         try {
+          const url = currentTargetUrl;
+          const generation = documentGeneration;
+          if (!isInjectableTarget({ ...target, url })) {
+            await detachNonHost(url);
+            return;
+          }
           const checkRes = await send('Runtime.evaluate', {
-            expression:
-              'window.__ag_patch_version === ' +
-              JSON.stringify(cachedPatchVersion) +
-              ' && (' +
-              JSON.stringify(!activeConfig.enabled) +
-              ' || (window.__ag_body_ready === true && !!document.getElementById("ag-custom-fonts")))',
+            expression: `({
+              kind: ${HOST_PROBE_EXPRESSION},
+              injected: window.__ag_patch_version === ${JSON.stringify(cachedPatchVersion)}
+                && (${!activeConfig.enabled} || (window.__ag_body_ready === true && !!document.getElementById("ag-custom-fonts")))
+            })`,
             returnByValue: true
           });
-          if (checkRes?.result?.result?.value !== true) {
+          if (generation !== documentGeneration || ws.readyState !== WebSocket.OPEN) return;
+          const state = checkRes?.result?.result?.value;
+          if (state?.kind === 'non_host') {
+            await detachNonHost(url);
+            return;
+          }
+          const wasConfirmed = hostConfirmed;
+          hostConfirmed = state?.kind === 'host';
+          if (!hostConfirmed) return;
+          if (!wasConfirmed) await updateNewDocScript();
+          if (!state.injected) {
             await inject();
             await syncMetricsForSession(true);
           }
-        } catch {}
+        } finally {
+          checkingHost = false;
+        }
       };
 
       let initialAttachDone = false;
       let navDebounceTimer = null;
       let lastHardReloadAt = 0;
 
-      ws.addEventListener('open', async () => {
+      const start = async () => {
+        while (!settled && ws.readyState === WebSocket.OPEN) {
+          const generation = documentGeneration;
+          const res = await send('Runtime.evaluate', { expression: HOST_PROBE_EXPRESSION, returnByValue: true });
+          if (settled || ws.readyState !== WebSocket.OPEN) return;
+          if (generation !== documentGeneration) continue;
+          const kind = res?.result?.result?.value;
+          if (kind === 'non_host') {
+            await detachNonHost(currentTargetUrl);
+            return;
+          }
+          if (kind === 'host') break;
+          await delay(200);
+        }
+        if (settled || ws.readyState !== WebSocket.OPEN) return;
+        hostConfirmed = true;
         console.log(`[Daemon] Attached target: ${target.id} (${target.title || 'Untitled'}) [${endpoint.channel}]`);
         await send('Page.enable');
         await send('Runtime.enable');
+        if (!hostConfirmed || settled) {
+          ws.close();
+          return;
+        }
         await send('Runtime.addBinding', { name: '__agRequestMetrics' });
         if (target.type === 'page') {
           await send('Runtime.addBinding', { name: '__agRequestHardReload' });
@@ -2188,8 +2279,10 @@ function attachTarget(target, endpoint) {
         const ok = await inject();
         await syncMetricsForSession(true);
         initialAttachDone = true;
-        clearTimeout(attachTimeout);
         finishAttach(ok);
+      };
+      ws.addEventListener('open', () => {
+        start().catch(() => ws.close());
       });
 
       ws.addEventListener('message', (event) => {
@@ -2202,6 +2295,7 @@ function attachTarget(target, endpoint) {
             return;
           }
           if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === '__agRequestMetrics') {
+            if (!hostConfirmed) return;
             const nextId = String(msg.params.payload || '').trim();
             if (/^[0-9a-f-]{36}$/i.test(nextId)) {
               activeCascadeId = nextId;
@@ -2213,6 +2307,7 @@ function attachTarget(target, endpoint) {
           }
           if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === '__agRequestHardReload') {
             if (
+              !hostConfirmed ||
               target.type !== 'page' ||
               !activeConfig.enabled ||
               activeConfig.modules.deadlockHealer === false ||
@@ -2230,17 +2325,23 @@ function attachTarget(target, endpoint) {
             send('Page.reload', { ignoreCache: true });
             return;
           }
-          if (!initialAttachDone) return;
           if (
             msg.method === 'Page.frameNavigated' ||
+            msg.method === 'Runtime.executionContextsCleared' ||
             msg.method === 'Page.loadEventFired' ||
             msg.method === 'Page.domContentEventFired'
           ) {
             if (!msg.params?.frame || !msg.params.frame.parentId || msg.params.frame.id === target.id) {
+              if (msg.method === 'Page.frameNavigated' || msg.method === 'Runtime.executionContextsCleared') {
+                hostConfirmed = false;
+                documentGeneration++;
+                if (msg.params?.frame?.url) currentTargetUrl = msg.params.frame.url;
+              }
+              if (!initialAttachDone) return;
               if (navDebounceTimer) clearTimeout(navDebounceTimer);
               navDebounceTimer = setTimeout(() => {
                 navDebounceTimer = null;
-                checkAndInject();
+                void checkAndInject().catch(() => {});
               }, 120);
             }
           }
@@ -2248,14 +2349,14 @@ function attachTarget(target, endpoint) {
       });
 
       const closeHandler = () => {
-        clearTimeout(attachTimeout);
+        hostConfirmed = false;
         if (navDebounceTimer) {
           clearTimeout(navDebounceTimer);
           navDebounceTimer = null;
         }
         for (const [, cb] of pendingCallbacks) cb(null);
         pendingCallbacks.clear();
-        attachedTargets.delete(target.id);
+        if (attachedTargets.get(target.id)?.ws === ws) attachedTargets.delete(target.id);
         finishAttach(false);
       };
       ws.addEventListener('close', closeHandler);
@@ -2269,6 +2370,15 @@ function attachTarget(target, endpoint) {
         checkAndInject,
         syncMetricsForSession,
         endpoint,
+        get hostConfirmed() {
+          return hostConfirmed;
+        },
+        updateTargetUrl: (url) => {
+          if (url === currentTargetUrl) return;
+          currentTargetUrl = url;
+          hostConfirmed = false;
+          documentGeneration++;
+        },
         setActiveCascade: (cid) => {
           activeCascadeId = cid;
           lastPushedHash = '';
@@ -2327,16 +2437,20 @@ async function sync() {
 
       for (const page of pages) {
         activeTargetIds.add(page.id);
+        const skipped = skippedNonHostTargets.get(page.id);
+        if (skipped?.url === page.url && nowMs < skipped.until) continue;
+        if (skipped) skippedNonHostTargets.delete(page.id);
         if (!attachedTargets.has(page.id)) {
           attachPromises.push(attachTarget(page, endpoint));
         } else {
           const entry = attachedTargets.get(page.id);
           entry.endpoint = endpoint;
-          if (bundleChanged && entry.updateNewDocScript) {
+          entry.updateTargetUrl(page.url);
+          if (shouldHeartbeatCheck || !entry.hostConfirmed) await entry.checkAndInject();
+          if (bundleChanged && entry.hostConfirmed) {
             await entry.updateNewDocScript();
           }
-          if (shouldHeartbeatCheck && entry.checkAndInject) await entry.checkAndInject();
-          if (entry.syncMetricsForSession) await entry.syncMetricsForSession(bundleChanged);
+          await entry.syncMetricsForSession(bundleChanged);
         }
       }
     }
@@ -2353,6 +2467,9 @@ async function sync() {
         } catch {}
         attachedTargets.delete(id);
       }
+    }
+    for (const id of skippedNonHostTargets.keys()) {
+      if (!activeTargetIds.has(id)) skippedNonHostTargets.delete(id);
     }
   } finally {
     isSyncing = false;
