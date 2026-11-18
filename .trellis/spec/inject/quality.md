@@ -27,6 +27,8 @@ node install.mjs verify --safe-mode
 
 安全模式正常、普通模式不正常，就查已安装 `user/`，不要先改 `core/`。
 
+用户要求默认英文时，按 [默认英文契约](./user-layer.md#默认英文契约) 检查宿主固定标签和设置页。`verify` 只证明注入状态，不能代替语言验收；独立 preload 汉化器不受船板 `modules.i18n` 开关控制。
+
 ## 审查时看这些
 
 - 文件仍以 `})(__AG_BOOT_PAYLOAD__);` 结尾，守护进程的 `replace` 还能对上。
