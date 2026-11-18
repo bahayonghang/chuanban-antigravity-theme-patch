@@ -25,6 +25,7 @@ These guides help you **ask the right questions before coding**.
 |-------|---------|-------------|
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| [上游同步与选择性移植](./upstream-sync.md) | 记录本项目的分支同步、移植边界和验收方法 | 同步 `upstream/main`、向 `dev` 引入上游修复或部署当前分支时 |
 
 ---
 
